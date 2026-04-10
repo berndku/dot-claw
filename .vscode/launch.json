@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "DotClaw (Console)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-console",
+      "program": "${workspaceFolder}/DotClaw/bin/Debug/net9.0/DotClaw.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/DotClaw",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "DotClaw.Telegram",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-telegram",
+      "program": "${workspaceFolder}/DotClaw.Telegram/bin/Debug/net9.0/DotClaw.Telegram.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/DotClaw.Telegram",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "env": {
+        "TELEGRAM_BOT_TOKEN": "${env:TELEGRAM_BOT_TOKEN}"
+      }
+    }
+  ]
+}
