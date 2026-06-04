@@ -4,6 +4,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Spectre.Console;
 
+const int MaxHistoryTokens = 6000;
+
 // ── Build the MAF Agent (via shared factory) ───────────────────
 var (agent, memory) = await DotClawAgentFactory.CreateAsync();
 
@@ -28,7 +30,8 @@ if (args.Length > 0)
 {
     var userMessage = string.Join(" ", args);
     savedHistory.Add(new ChatMessage(ChatRole.User, userMessage));
-    var response = await agent.RunAsync(savedHistory, agentSession);
+    var trimmed = HistoryTrimmer.Trim(savedHistory, MaxHistoryTokens);
+    var response = await agent.RunAsync(trimmed, agentSession);
     ShowResponse(response.Text);
     sessionStore.Append([
         new { role = "user", content = userMessage },
@@ -55,8 +58,9 @@ while (true)
 
     savedHistory.Add(new ChatMessage(ChatRole.User, userInput));
 
-    // Single call — MAF AIAgent handles tool loop + session management
-    var response = await agent.RunAsync(savedHistory, agentSession);
+    // Trim history to stay within token budget before each API call
+    var trimmed = HistoryTrimmer.Trim(savedHistory, MaxHistoryTokens);
+    var response = await agent.RunAsync(trimmed, agentSession);
 
     var responseText = response.Text ?? "";
     savedHistory.Add(new ChatMessage(ChatRole.Assistant, responseText));

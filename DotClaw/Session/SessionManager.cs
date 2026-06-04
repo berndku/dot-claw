@@ -25,7 +25,7 @@ public class SessionManager
         }
     }
 
-    public List<JsonElement> Load(int n = 50)
+    public List<JsonElement> Load(int n = 20)
     {
         var lines = File.ReadAllLines(_path);
         var messages = new List<JsonElement>();
