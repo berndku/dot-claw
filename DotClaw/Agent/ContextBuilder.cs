@@ -15,8 +15,8 @@ public static class ContextBuilder
 
         sb.AppendLine("You are a personal AI assistant.");
         sb.AppendLine($"Current date/time: {now}");
-        sb.AppendLine($"Workspace: {memory.Workspace}");
-        sb.AppendLine($"Always use absolute paths when reading or writing files. Your workspace is {memory.Workspace}.");
+        sb.AppendLine($"Working directory: {memory.Workspace}");
+        sb.AppendLine("Use the tools available to you. If an operation fails, adapt and try a different approach — don't speculate about system limitations you haven't encountered.");
 
         if (!string.IsNullOrEmpty(channel))
             sb.AppendLine($"Channel: {channel}");
