@@ -82,11 +82,6 @@ function basePolicy() {
 }
 
 /**
- * Run a single command line inside a fresh MXC process sandbox and collect
- * its output. Uses pipe mode (usePty:false) for separated stdout/stderr and a
- * reliable exit code.
- */
-/**
  * Normalize a Windows path for containment comparison: absolute, lower-cased,
  * no trailing separators.
  */
@@ -101,30 +96,27 @@ function isWithin(child: string, parent: string): boolean {
   return c === pa || c.startsWith(pa + "\\");
 }
 
-function runInSandbox(
-  commandLine: string,
-  extra: { readonlyPaths?: string[]; readwritePaths?: string[] } = {},
-): Promise<SandboxResult> {
+/**
+ * Resolve a user-supplied path against the sandbox temp workspace and confirm it
+ * stays inside it. Relative paths land in the workspace; an absolute path or a
+ * "..\\.." traversal that escapes the workspace returns null. This keeps the
+ * file tools 100% inside the base policy, so they never need a dynamic per-call
+ * grant (and never risk the WRITE_DAC failure that hits non-temp folders).
+ */
+function resolveInTemp(p: string): string | null {
+  const target = path.resolve(SANDBOX_CWD, p);
+  return isWithin(target, SANDBOX_CWD) ? target : null;
+}
+
+/**
+ * Run a single command line inside a fresh MXC process sandbox and collect
+ * its output. Uses pipe mode (usePty:false) for separated stdout/stderr and a
+ * reliable exit code. The policy is fixed (System32 read-only + temp
+ * read-write); there are no per-call grants, so nothing here can pull in a
+ * non-portable host path.
+ */
+function runInSandbox(commandLine: string): Promise<SandboxResult> {
   const policy = basePolicy();
-  const baseReadonly = [...policy.filesystem.readonlyPaths];
-  const baseReadwrite = [...policy.filesystem.readwritePaths];
-
-  // Layer extra per-call grants, but skip any path already covered by a base
-  // grant. Granting the SAME directory as both readonly and readwrite (e.g. a
-  // target inside the temp workspace) makes the sandbox hang, so we must not
-  // re-add a path the base policy already allows.
-  if (extra.readwritePaths) {
-    for (const p of extra.readwritePaths) {
-      if (!baseReadwrite.some((b) => isWithin(p, b))) policy.filesystem.readwritePaths.push(p);
-    }
-  }
-  if (extra.readonlyPaths) {
-    for (const p of extra.readonlyPaths) {
-      const covered = baseReadwrite.some((b) => isWithin(p, b)) || baseReadonly.some((b) => isWithin(p, b));
-      if (!covered) policy.filesystem.readonlyPaths.push(p);
-    }
-  }
-
   const config = createConfigFromPolicy(policy, "process");
   config.process!.commandLine = commandLine;
   // Start the sandboxed command in the in-policy temp workspace. Without this,
@@ -159,25 +151,10 @@ function textContent(text: string) {
 }
 
 /**
- * Walk up from `dir` until we find a folder that already exists on the host.
- * MXC grants are path-scoped, so to let the sandbox `mkdir` a missing target
- * folder we must grant read-write on its nearest existing ancestor, not the
- * (not-yet-existing) folder itself.
+ * Describe the sandbox workspace for tool descriptions and error messages.
  */
-async function nearestExistingDir(dir: string): Promise<string> {
-  let current = dir;
-  // Stop at the filesystem root (path.dirname(root) === root).
-  while (true) {
-    try {
-      await fs.access(current);
-      return current;
-    } catch {
-      const parent = path.dirname(current);
-      if (parent === current) return current;
-      current = parent;
-    }
-  }
-}
+const WORKSPACE_HINT =
+  "Paths are interpreted relative to the sandbox temp workspace; paths that escape it are refused.";
 
 const server = new McpServer({ name: "dotclaw-sandbox", version: "0.1.0" });
 
@@ -198,13 +175,16 @@ server.registerTool(
 server.registerTool(
   "read_file",
   {
-    description: "Read the contents of a file, executed inside an MXC sandbox scoped read-only to that file's folder.",
-    inputSchema: { path: z.string().describe("Absolute or relative path to the file to read.") },
+    description:
+      "Read the contents of a file inside the MXC sandbox temp workspace. " + WORKSPACE_HINT,
+    inputSchema: { path: z.string().describe("Path to the file to read, relative to the sandbox temp workspace.") },
   },
   async (args) => {
-    const target = path.resolve(args.path);
-    const dir = path.dirname(target);
-    const res = await runInSandbox(`cmd /c type "${target}"`, { readonlyPaths: [dir] });
+    const target = resolveInTemp(args.path);
+    if (!target) {
+      return textContent(`Refused: read_file only allows paths inside the sandbox workspace (${SANDBOX_CWD}).`);
+    }
+    const res = await runInSandbox(`cmd /c type "${target}"`);
     return textContent(formatResult(res));
   },
 );
@@ -213,35 +193,34 @@ server.registerTool(
   "write_file",
   {
     description:
-      "Write content to a file, executed inside an MXC sandbox scoped read-write to the target folder. " +
-      "Content is staged to a host temp file and copied into the sandbox to avoid shell escaping.",
+      "Write content to a file inside the MXC sandbox temp workspace. " +
+      "Content is staged to a host temp file and copied into the sandbox to avoid shell escaping. " +
+      WORKSPACE_HINT,
     inputSchema: {
-      path: z.string().describe("Absolute or relative path to the file to write."),
+      path: z.string().describe("Path to the file to write, relative to the sandbox temp workspace."),
       content: z.string().describe("The content to write to the file."),
     },
   },
   async (args) => {
-    const target = path.resolve(args.path);
+    const target = resolveInTemp(args.path);
+    if (!target) {
+      return textContent(`Refused: write_file only allows paths inside the sandbox workspace (${SANDBOX_CWD}).`);
+    }
     const dir = path.dirname(target);
-    const grantDir = await nearestExistingDir(dir);
 
-    // Stage the content to a host temp file, then copy it into the sandbox.
-    // The temp folder is already read-write in the base policy; the nearest
-    // existing ancestor of the target folder is added as read-write for this
-    // call only, so the sandbox can both create the folder and write the file.
-    const staging = path.join(os.tmpdir(), `dotclaw-write-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+    // Stage the content to a host temp file (inside the workspace, so it is
+    // already covered by the base read-write grant), then copy it to the target.
+    const staging = path.join(SANDBOX_CWD, `dotclaw-write-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
     await fs.writeFile(staging, args.content, "utf8");
     try {
-      // Only create the target folder when an ancestor was actually missing
-      // (grantDir differs from the target dir). When the folder already exists
-      // we must NOT run mkdir: inside the sandbox it can spuriously report the
-      // folder as missing, run mkdir, fail with "already exists", and — chained
-      // with && — block the copy. Join the optional mkdir with & so the copy
-      // always runs, and gate the success echo on the copy with &&.
-      const mkdirPart = grantDir !== dir ? `if not exist "${dir}" mkdir "${dir}" & ` : "";
+      // The target always lives inside the workspace (validated above), which is
+      // read-write in the base policy, so no per-call grant is needed. Only mkdir
+      // a sub-folder when the target is nested; join it with & so the copy always
+      // runs, and gate the success echo on the copy with &&.
+      const mkdirPart =
+        normPath(dir) !== normPath(SANDBOX_CWD) ? `if not exist "${dir}" mkdir "${dir}" & ` : "";
       const res = await runInSandbox(
         `cmd /c ${mkdirPart}copy /Y "${staging}" "${target}" >nul && echo Wrote ${Buffer.byteLength(args.content, "utf8")} bytes to "${target}"`,
-        { readwritePaths: [grantDir] },
       );
       return textContent(formatResult(res));
     } finally {
