@@ -77,7 +77,7 @@ while (true)
 
 static void ShowResponse(string? text)
 {
-    var panel = new Panel(text ?? "")
+    var panel = new Panel(Markup.Escape(text ?? ""))
     {
         Header = new PanelHeader("[bold green]assistant[/]", Justify.Left),
         Border = BoxBorder.Rounded,
