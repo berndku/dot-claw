@@ -1,6 +1,7 @@
 namespace DotClaw.Agent;
 
-using System.Diagnostics;
+using Azure.AI.OpenAI;
+using Azure.Identity;
 using DotClaw.Tools;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -12,20 +13,30 @@ using OpenAI;
 /// </summary>
 public static class DotClawAgentFactory
 {
-    public const string Endpoint = "https://models.inference.ai.azure.com";
-    public const string ModelId = "gpt-4.1-mini";
-
     /// <summary>
     /// Creates a fully configured AIAgent with tools and system prompt.
+    /// Reads configuration from environment variables:
+    ///   AZURE_OPENAI_ENDPOINT  – Azure OpenAI resource endpoint (required)
+    ///   AZURE_OPENAI_API_KEY   – API key (optional; uses DefaultAzureCredential if not set)
+    ///   AZURE_OPENAI_MODEL     – Deployment name (default: gpt-4.1-mini)
     /// </summary>
     public static async Task<(AIAgent Agent, MemoryManager Memory)> CreateAsync(
         string? channel = null, string? chatId = null)
     {
-        var apiKey = await ResolveGitHubToken();
+        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+            ?? throw new InvalidOperationException(
+                "AZURE_OPENAI_ENDPOINT is not set.\n" +
+                "Set it to your Azure OpenAI resource URL, e.g.:\n" +
+                "  https://my-resource.openai.azure.com/");
 
-        var client = new OpenAIClient(
-            new System.ClientModel.ApiKeyCredential(apiKey),
-            new OpenAIClientOptions { Endpoint = new Uri(Endpoint) });
+        var modelDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_MODEL")
+            ?? "gpt-4.1-mini";
+
+        var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
+
+        AzureOpenAIClient client = string.IsNullOrEmpty(apiKey)
+            ? new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
+            : new AzureOpenAIClient(new Uri(endpoint), new System.ClientModel.ApiKeyCredential(apiKey));
 
         var memory = new MemoryManager();
         var systemPrompt = ContextBuilder.BuildSystemPrompt(memory, channel, chatId);
@@ -39,8 +50,10 @@ public static class DotClawAgentFactory
             ? "[DotClaw] tools: MXC sandbox (via MCP)"
             : "[DotClaw] tools: in-process C# (DOTCLAW_SANDBOX=off)");
 
+        Console.WriteLine($"[DotClaw] model: {modelDeployment} @ {endpoint}");
+
         var agent = client
-            .GetChatClient(ModelId)
+            .GetChatClient(modelDeployment)
             .AsIChatClient()
             .AsAIAgent(
                 instructions: systemPrompt,
@@ -63,37 +76,4 @@ public static class DotClawAgentFactory
         return v.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");
     }
 
-    /// <summary>
-    /// Resolves a GitHub token: GITHUB_TOKEN env var → gh auth token CLI fallback.
-    /// Zero config for anyone already logged into gh CLI.
-    /// </summary>
-    public static async Task<string> ResolveGitHubToken()
-    {
-        var envToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
-        if (!string.IsNullOrEmpty(envToken))
-            return envToken;
-
-        try
-        {
-            var psi = new ProcessStartInfo("gh", "auth token")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var process = Process.Start(psi)!;
-            var token = (await process.StandardOutput.ReadToEndAsync()).Trim();
-            await process.WaitForExitAsync();
-
-            if (process.ExitCode == 0 && !string.IsNullOrEmpty(token))
-                return token;
-        }
-        catch { }
-
-        throw new InvalidOperationException(
-            "No GitHub token found. Either:\n" +
-            "  1. Log in with: gh auth login\n" +
-            "  2. Or set GITHUB_TOKEN environment variable");
-    }
 }
