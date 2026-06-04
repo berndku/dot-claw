@@ -12,6 +12,8 @@ using Spectre.Console;
 /// </summary>
 public static class AgentTools
 {
+    private const int MaxToolOutputChars = 8000;
+
     private static readonly string[] DangerousPatterns =
     [
         @"rm\s+-rf\s+/",
@@ -33,7 +35,7 @@ public static class AgentTools
         {
             var content = await File.ReadAllTextAsync(path);
             AnsiConsole.MarkupLine($"  [green]✓[/] [dim]{Markup.Escape(Truncate(content, 50))}[/]\n");
-            return content;
+            return TruncateToolOutput(content, path);
         }
         catch (Exception ex)
         {
@@ -109,7 +111,7 @@ public static class AgentTools
             var output = (stdout + stderr).Trim();
             var result = string.IsNullOrEmpty(output) ? "(no output)" : output;
             AnsiConsole.MarkupLine($"  [green]✓[/] [dim]{Markup.Escape(Truncate(result, 50))}[/]\n");
-            return result;
+            return TruncateToolOutput(result, command);
         }
         catch (OperationCanceledException)
         {
@@ -135,6 +137,17 @@ public static class AgentTools
         if (path.StartsWith('~'))
             path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..]);
         return path;
+    }
+
+    private static string TruncateToolOutput(string output, string context)
+    {
+        if (output.Length <= MaxToolOutputChars)
+            return output;
+
+        var half = MaxToolOutputChars / 2;
+        return output[..half]
+            + $"\n\n... [truncated {output.Length - MaxToolOutputChars} chars] ...\n\n"
+            + output[^half..];
     }
 
     private static string Truncate(string s, int max) =>
