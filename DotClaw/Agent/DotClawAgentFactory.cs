@@ -5,7 +5,6 @@ using Azure.Identity;
 using DotClaw.Tools;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
 
 /// <summary>
 /// Shared factory for creating the DotClaw AIAgent.
@@ -15,33 +14,31 @@ public static class DotClawAgentFactory
 {
     /// <summary>
     /// Creates a fully configured AIAgent with tools and system prompt.
-    /// Reads configuration from environment variables:
-    ///   AZURE_OPENAI_ENDPOINT  – Azure OpenAI resource endpoint (required)
-    ///   AZURE_OPENAI_API_KEY   – API key (optional; uses DefaultAzureCredential if not set)
-    ///   AZURE_OPENAI_MODEL     – Deployment name (default: gpt-4.1-mini)
+    /// Configuration is loaded from ~/.dotclaw/config.json (env vars override).
     /// </summary>
     public static async Task<(AIAgent Agent, MemoryManager Memory)> CreateAsync(
         string? channel = null, string? chatId = null)
     {
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-            ?? throw new InvalidOperationException(
-                "AZURE_OPENAI_ENDPOINT is not set.\n" +
-                "Set it to your Azure OpenAI resource URL, e.g.:\n" +
-                "  https://my-resource.openai.azure.com/");
+        var config = DotClawConfig.Load();
 
-        var modelDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_MODEL")
-            ?? "gpt-4.1-mini";
+        if (string.IsNullOrWhiteSpace(config.AzureOpenAiEndpoint)
+            || config.AzureOpenAiEndpoint.Contains("YOUR-RESOURCE"))
+        {
+            throw new InvalidOperationException(
+                "Azure OpenAI endpoint is not configured.\n" +
+                "Edit ~/.dotclaw/config.json and set \"azure_openai_endpoint\" to your resource URL.\n" +
+                "Or set the AZURE_OPENAI_ENDPOINT environment variable.");
+        }
 
-        var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
-
-        AzureOpenAIClient client = string.IsNullOrEmpty(apiKey)
-            ? new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-            : new AzureOpenAIClient(new Uri(endpoint), new System.ClientModel.ApiKeyCredential(apiKey));
+        AzureOpenAIClient client = string.IsNullOrEmpty(config.AzureOpenAiApiKey)
+            ? new AzureOpenAIClient(new Uri(config.AzureOpenAiEndpoint), new DefaultAzureCredential())
+            : new AzureOpenAIClient(new Uri(config.AzureOpenAiEndpoint),
+                new System.ClientModel.ApiKeyCredential(config.AzureOpenAiApiKey));
 
         var memory = new MemoryManager();
         var systemPrompt = ContextBuilder.BuildSystemPrompt(memory, channel, chatId);
 
-        var sandboxEnabled = SandboxEnabled();
+        var sandboxEnabled = config.Sandbox ?? true;
         var tools = sandboxEnabled
             ? await SandboxTools.GetToolsAsync()
             : AgentTools.CreateAll().Cast<AITool>().ToList();
@@ -50,10 +47,10 @@ public static class DotClawAgentFactory
             ? "[DotClaw] tools: MXC sandbox (via MCP)"
             : "[DotClaw] tools: in-process C# (DOTCLAW_SANDBOX=off)");
 
-        Console.WriteLine($"[DotClaw] model: {modelDeployment} @ {endpoint}");
+        Console.WriteLine($"[DotClaw] model: {config.AzureOpenAiModel} @ {config.AzureOpenAiEndpoint}");
 
         var agent = client
-            .GetChatClient(modelDeployment)
+            .GetChatClient(config.AzureOpenAiModel!)
             .AsIChatClient()
             .AsAIAgent(
                 instructions: systemPrompt,
@@ -62,18 +59,4 @@ public static class DotClawAgentFactory
 
         return (agent, memory);
     }
-
-    /// <summary>
-    /// Whether tools run in the MXC sandbox (via the MCP server) or in-process.
-    /// Controlled by the <c>DOTCLAW_SANDBOX</c> env var; defaults to ON.
-    /// Set to <c>0</c>/<c>false</c>/<c>off</c>/<c>no</c> to use the C# tools.
-    /// </summary>
-    private static bool SandboxEnabled()
-    {
-        var v = Environment.GetEnvironmentVariable("DOTCLAW_SANDBOX");
-        if (string.IsNullOrWhiteSpace(v))
-            return true;
-        return v.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");
-    }
-
 }
