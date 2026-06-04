@@ -18,7 +18,6 @@ import { z } from "zod";
 import {
   createConfigFromPolicy,
   spawnSandboxFromConfig,
-  getAvailableToolsPolicy,
   getTemporaryFilesPolicy,
   getPlatformSupport,
 } from "@microsoft/mxc-sdk";
@@ -30,6 +29,21 @@ import * as path from "node:path";
 const SCHEMA_VERSION = "0.6.0-alpha";
 const TIMEOUT_MS = 60_000;
 
+// %SystemRoot%\System32 is granted to ALL APPLICATION PACKAGES on every Windows
+// install, so the sandbox can see it implicitly and MXC never has to rewrite an
+// ACL for it (no WRITE_DAC, no admin). It holds cmd.exe and the built-in tools.
+const SYSTEM_ROOT = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
+const SYSTEM32 = path.join(SYSTEM_ROOT, "System32");
+
+// The temp workspace the sandbox is allowed to read-write. We compute it once so
+// the same folder is used both as a policy grant AND as the sandbox's working
+// directory. This matters: the Node host's own cwd (the repo/worktree dir) is
+// NOT in the policy, so cmd.exe would otherwise start with an "invalid current
+// directory" and refuse to run. Pointing cwd at this in-policy temp dir fixes
+// every tool centrally without rewriting the command line.
+const TEMP_POLICY = getTemporaryFilesPolicy();
+const SANDBOX_CWD = TEMP_POLICY.readwritePaths[0] ?? os.tmpdir();
+
 interface SandboxResult {
   stdout: string;
   stderr: string;
@@ -37,17 +51,30 @@ interface SandboxResult {
 }
 
 /**
- * Build a baseline MXC policy: host tool paths read-only, temp dir read-write,
- * no network. Extra paths can be layered on per tool call.
+ * Build a baseline MXC policy that is PORTABLE across machines without any
+ * per-host path grants:
+ *
+ *  - readwrite: a fresh temp dir that MXC creates and owns, so any user can use
+ *    it without admin rights.
+ *  - readonly: only %SystemRoot%\System32. It is already granted to ALL
+ *    APPLICATION PACKAGES on every Windows install, so MXC never has to rewrite
+ *    an ACL (no WRITE_DAC, no admin). This is enough to resolve cmd.exe and the
+ *    built-in Windows tools (hostname, findstr, tar, robocopy, ...). A few
+ *    token/privilege-dependent tools (e.g. whoami) crash inside the AppContainer
+ *    in this MXC preview, but the common ones work.
+ *
+ * We deliberately do NOT scan PATH (getAvailableToolsPolicy): third-party tool
+ * directories (chocolatey, node, python, git, ...) differ per machine and are
+ * usually NOT granted to ALL APPLICATION PACKAGES, which would force MXC to
+ * stamp a DACL at runtime and fail for non-admin users. Extra paths can still
+ * be layered on per tool call when a specific command needs them.
  */
 function basePolicy() {
-  const tools = getAvailableToolsPolicy(process.env);
-  const temp = getTemporaryFilesPolicy();
   return {
     version: SCHEMA_VERSION,
     filesystem: {
-      readonlyPaths: [...tools.readonlyPaths],
-      readwritePaths: [...temp.readwritePaths],
+      readonlyPaths: [SYSTEM32],
+      readwritePaths: [...TEMP_POLICY.readwritePaths],
     },
     network: { allowOutbound: false },
     timeoutMs: TIMEOUT_MS,
@@ -59,16 +86,51 @@ function basePolicy() {
  * its output. Uses pipe mode (usePty:false) for separated stdout/stderr and a
  * reliable exit code.
  */
+/**
+ * Normalize a Windows path for containment comparison: absolute, lower-cased,
+ * no trailing separators.
+ */
+function normPath(p: string): string {
+  return path.resolve(p).toLowerCase().replace(/[\\/]+$/, "");
+}
+
+/** True if `child` is the same as, or nested under, `parent`. */
+function isWithin(child: string, parent: string): boolean {
+  const c = normPath(child);
+  const pa = normPath(parent);
+  return c === pa || c.startsWith(pa + "\\");
+}
+
 function runInSandbox(
   commandLine: string,
   extra: { readonlyPaths?: string[]; readwritePaths?: string[] } = {},
 ): Promise<SandboxResult> {
   const policy = basePolicy();
-  if (extra.readonlyPaths) policy.filesystem.readonlyPaths.push(...extra.readonlyPaths);
-  if (extra.readwritePaths) policy.filesystem.readwritePaths.push(...extra.readwritePaths);
+  const baseReadonly = [...policy.filesystem.readonlyPaths];
+  const baseReadwrite = [...policy.filesystem.readwritePaths];
+
+  // Layer extra per-call grants, but skip any path already covered by a base
+  // grant. Granting the SAME directory as both readonly and readwrite (e.g. a
+  // target inside the temp workspace) makes the sandbox hang, so we must not
+  // re-add a path the base policy already allows.
+  if (extra.readwritePaths) {
+    for (const p of extra.readwritePaths) {
+      if (!baseReadwrite.some((b) => isWithin(p, b))) policy.filesystem.readwritePaths.push(p);
+    }
+  }
+  if (extra.readonlyPaths) {
+    for (const p of extra.readonlyPaths) {
+      const covered = baseReadwrite.some((b) => isWithin(p, b)) || baseReadonly.some((b) => isWithin(p, b));
+      if (!covered) policy.filesystem.readonlyPaths.push(p);
+    }
+  }
 
   const config = createConfigFromPolicy(policy, "process");
   config.process!.commandLine = commandLine;
+  // Start the sandboxed command in the in-policy temp workspace. Without this,
+  // cmd.exe inherits the Node host's cwd (not in the policy) and aborts with
+  // "The current directory is invalid." See SANDBOX_CWD note above.
+  config.process!.cwd = SANDBOX_CWD;
 
   const child = spawnSandboxFromConfig(config, { usePty: false }) as ChildProcess;
 
@@ -124,7 +186,7 @@ server.registerTool(
   {
     description:
       "Run a shell command inside an MXC sandbox and return its output. " +
-      "Network is blocked; only temp and host tool paths are reachable.",
+      "Network is blocked; only a temp workspace and the built-in Windows tools in System32 are reachable.",
     inputSchema: { command: z.string().describe("The shell command to execute.") },
   },
   async ({ command }) => {
@@ -170,8 +232,15 @@ server.registerTool(
     const staging = path.join(os.tmpdir(), `dotclaw-write-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
     await fs.writeFile(staging, args.content, "utf8");
     try {
+      // Only create the target folder when an ancestor was actually missing
+      // (grantDir differs from the target dir). When the folder already exists
+      // we must NOT run mkdir: inside the sandbox it can spuriously report the
+      // folder as missing, run mkdir, fail with "already exists", and — chained
+      // with && — block the copy. Join the optional mkdir with & so the copy
+      // always runs, and gate the success echo on the copy with &&.
+      const mkdirPart = grantDir !== dir ? `if not exist "${dir}" mkdir "${dir}" & ` : "";
       const res = await runInSandbox(
-        `cmd /c if not exist "${dir}" mkdir "${dir}" && copy /Y "${staging}" "${target}" >nul && echo Wrote ${Buffer.byteLength(args.content, "utf8")} bytes to "${target}"`,
+        `cmd /c ${mkdirPart}copy /Y "${staging}" "${target}" >nul && echo Wrote ${Buffer.byteLength(args.content, "utf8")} bytes to "${target}"`,
         { readwritePaths: [grantDir] },
       );
       return textContent(formatResult(res));
