@@ -4,7 +4,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Spectre.Console;
 
-const int MaxHistoryTokens = 4000;
+const int MaxHistoryTokens = 16000;
 
 // ── Build the MAF Agent (via shared factory) ───────────────────
 var (agent, memory) = await DotClawAgentFactory.CreateAsync();

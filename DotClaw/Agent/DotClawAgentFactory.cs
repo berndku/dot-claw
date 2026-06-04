@@ -13,7 +13,7 @@ using OpenAI;
 public static class DotClawAgentFactory
 {
     public const string Endpoint = "https://models.inference.ai.azure.com";
-    public const string ModelId = "gpt-4o";
+    public const string ModelId = "gpt-4.1-mini";
 
     /// <summary>
     /// Creates a fully configured AIAgent with tools and system prompt.
