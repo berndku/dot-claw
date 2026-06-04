@@ -18,7 +18,6 @@ import { z } from "zod";
 import {
   createConfigFromPolicy,
   spawnSandboxFromConfig,
-  getTemporaryFilesPolicy,
   getPlatformSupport,
 } from "@microsoft/mxc-sdk";
 import type { ChildProcess } from "node:child_process";
@@ -28,6 +27,7 @@ import * as path from "node:path";
 
 const SCHEMA_VERSION = "0.6.0-alpha";
 const TIMEOUT_MS = 60_000;
+const MAX_TOOL_OUTPUT_CHARS = 8_000;
 
 // %SystemRoot%\System32 is granted to ALL APPLICATION PACKAGES on every Windows
 // install, so the sandbox can see it implicitly and MXC never has to rewrite an
@@ -35,14 +35,9 @@ const TIMEOUT_MS = 60_000;
 const SYSTEM_ROOT = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
 const SYSTEM32 = path.join(SYSTEM_ROOT, "System32");
 
-// The temp workspace the sandbox is allowed to read-write. We compute it once so
-// the same folder is used both as a policy grant AND as the sandbox's working
-// directory. This matters: the Node host's own cwd (the repo/worktree dir) is
-// NOT in the policy, so cmd.exe would otherwise start with an "invalid current
-// directory" and refuse to run. Pointing cwd at this in-policy temp dir fixes
-// every tool centrally without rewriting the command line.
-const TEMP_POLICY = getTemporaryFilesPolicy();
-const SANDBOX_CWD = TEMP_POLICY.readwritePaths[0] ?? os.tmpdir();
+// The persistent workspace mirrors DotClaw.Agent.MemoryManager in C#.
+// This is where SOUL.md, MEMORY.md, USER.md, etc. are seeded and edited.
+const WORKSPACE_DIR = resolveWorkspaceDir();
 
 interface SandboxResult {
   stdout: string;
@@ -51,11 +46,10 @@ interface SandboxResult {
 }
 
 /**
- * Build a baseline MXC policy that is PORTABLE across machines without any
- * per-host path grants:
+ * Build the baseline MXC policy:
  *
- *  - readwrite: a fresh temp dir that MXC creates and owns, so any user can use
- *    it without admin rights.
+ *  - readwrite: the user's persistent DotClaw workspace, so file changes survive
+ *    restarts and match the files loaded into the system prompt.
  *  - readonly: only %SystemRoot%\System32. It is already granted to ALL
  *    APPLICATION PACKAGES on every Windows install, so MXC never has to rewrite
  *    an ACL (no WRITE_DAC, no admin). This is enough to resolve cmd.exe and the
@@ -64,21 +58,29 @@ interface SandboxResult {
  *    in this MXC preview, but the common ones work.
  *
  * We deliberately do NOT scan PATH (getAvailableToolsPolicy): third-party tool
- * directories (chocolatey, node, python, git, ...) differ per machine and are
- * usually NOT granted to ALL APPLICATION PACKAGES, which would force MXC to
- * stamp a DACL at runtime and fail for non-admin users. Extra paths can still
- * be layered on per tool call when a specific command needs them.
+ * directories differ per machine and would expand both the sandbox surface and
+ * the amount of per-host access setup.
  */
 function basePolicy() {
   return {
     version: SCHEMA_VERSION,
     filesystem: {
       readonlyPaths: [SYSTEM32],
-      readwritePaths: [...TEMP_POLICY.readwritePaths],
+      readwritePaths: [WORKSPACE_DIR],
     },
     network: { allowOutbound: false },
     timeoutMs: TIMEOUT_MS,
   };
+}
+
+function resolveWorkspaceDir(): string {
+  const fromEnv = process.env.DOTCLAW_WORKSPACE_DIR;
+  if (fromEnv && fromEnv.trim().length > 0) {
+    return path.resolve(fromEnv);
+  }
+
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? os.homedir();
+  return path.join(home, ".dotclaw", "workspace");
 }
 
 /**
@@ -97,40 +99,67 @@ function isWithin(child: string, parent: string): boolean {
 }
 
 /**
- * Resolve a user-supplied path against the sandbox temp workspace and confirm it
+ * Resolve a user-supplied path against the persistent workspace and confirm it
  * stays inside it. Relative paths land in the workspace; an absolute path or a
  * "..\\.." traversal that escapes the workspace returns null. This keeps the
- * file tools 100% inside the base policy, so they never need a dynamic per-call
- * grant (and never risk the WRITE_DAC failure that hits non-temp folders).
+ * file tools scoped to the same directory DotClaw loads into its prompt.
  */
-function resolveInTemp(p: string): string | null {
-  const target = path.resolve(SANDBOX_CWD, p);
-  return isWithin(target, SANDBOX_CWD) ? target : null;
+function resolveInWorkspace(p: string): string | null {
+  const target = path.resolve(WORKSPACE_DIR, p);
+  return isWithin(target, WORKSPACE_DIR) ? target : null;
+}
+
+function truncateToolOutput(output: string): string {
+  if (output.length <= MAX_TOOL_OUTPUT_CHARS) {
+    return output;
+  }
+
+  const half = Math.floor(MAX_TOOL_OUTPUT_CHARS / 2);
+  return (
+    output.slice(0, half) +
+    `\n\n... [truncated ${output.length - MAX_TOOL_OUTPUT_CHARS} chars] ...\n\n` +
+    output.slice(-half)
+  );
+}
+
+function appendBounded(current: string, chunk: string): string {
+  const combined = current + chunk;
+  if (combined.length <= MAX_TOOL_OUTPUT_CHARS * 2) {
+    return combined;
+  }
+
+  const keep = MAX_TOOL_OUTPUT_CHARS;
+  return combined.slice(0, keep) + combined.slice(-keep);
+}
+
+async function ensureWorkspace(): Promise<void> {
+  await fs.mkdir(WORKSPACE_DIR, { recursive: true });
 }
 
 /**
  * Run a single command line inside a fresh MXC process sandbox and collect
  * its output. Uses pipe mode (usePty:false) for separated stdout/stderr and a
- * reliable exit code. The policy is fixed (System32 read-only + temp
- * read-write); there are no per-call grants, so nothing here can pull in a
- * non-portable host path.
+ * reliable exit code. The policy is fixed (System32 read-only + persistent
+ * DotClaw workspace read-write); there are no dynamic per-call grants.
  */
-function runInSandbox(commandLine: string): Promise<SandboxResult> {
+async function runInSandbox(commandLine: string): Promise<SandboxResult> {
+  await ensureWorkspace();
+
   const policy = basePolicy();
   const config = createConfigFromPolicy(policy, "process");
   config.process!.commandLine = commandLine;
-  // Start the sandboxed command in the in-policy temp workspace. Without this,
+  // Start the sandboxed command in the in-policy workspace. Without this,
   // cmd.exe inherits the Node host's cwd (not in the policy) and aborts with
-  // "The current directory is invalid." See SANDBOX_CWD note above.
-  config.process!.cwd = SANDBOX_CWD;
+  // "The current directory is invalid." See WORKSPACE_DIR note above.
+  config.process!.cwd = WORKSPACE_DIR;
 
   const child = spawnSandboxFromConfig(config, { usePty: false }) as ChildProcess;
 
   return new Promise<SandboxResult>((resolve) => {
     let stdout = "";
     let stderr = "";
-    child.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
-    child.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
+    child.stdout?.on("data", (d: Buffer) => (stdout = appendBounded(stdout, d.toString())));
+    child.stderr?.on("data", (d: Buffer) => (stderr = appendBounded(stderr, d.toString())));
     child.on("error", (err: Error) =>
       resolve({ stdout, stderr: stderr + `\n[sandbox spawn error] ${err.message}`, code: -1 }),
     );
@@ -142,8 +171,8 @@ function runInSandbox(commandLine: string): Promise<SandboxResult> {
 function formatResult(res: SandboxResult): string {
   const out = (res.stdout + res.stderr).trim();
   const body = out.length > 0 ? out : "(no output)";
-  if (res.code === 0 || res.code === null) return body;
-  return `${body}\n(exit code ${res.code})`;
+  const formatted = res.code === 0 || res.code === null ? body : `${body}\n(exit code ${res.code})`;
+  return truncateToolOutput(formatted);
 }
 
 function textContent(text: string) {
@@ -154,7 +183,7 @@ function textContent(text: string) {
  * Describe the sandbox workspace for tool descriptions and error messages.
  */
 const WORKSPACE_HINT =
-  "Paths are interpreted relative to the sandbox temp workspace; paths that escape it are refused.";
+  "Paths are interpreted relative to the persistent DotClaw workspace; paths that escape it are refused.";
 
 const server = new McpServer({ name: "dotclaw-sandbox", version: "0.1.0" });
 
@@ -163,7 +192,7 @@ server.registerTool(
   {
     description:
       "Run a shell command inside an MXC sandbox and return its output. " +
-      "Network is blocked; only a temp workspace and the built-in Windows tools in System32 are reachable.",
+      "Network is blocked; only the persistent DotClaw workspace and the built-in Windows tools in System32 are reachable.",
     inputSchema: { command: z.string().describe("The shell command to execute.") },
   },
   async ({ command }) => {
@@ -176,13 +205,13 @@ server.registerTool(
   "read_file",
   {
     description:
-      "Read the contents of a file inside the MXC sandbox temp workspace. " + WORKSPACE_HINT,
-    inputSchema: { path: z.string().describe("Path to the file to read, relative to the sandbox temp workspace.") },
+      "Read the contents of a file inside the persistent DotClaw workspace. " + WORKSPACE_HINT,
+    inputSchema: { path: z.string().describe("Path to the file to read, relative to the DotClaw workspace.") },
   },
   async (args) => {
-    const target = resolveInTemp(args.path);
+    const target = resolveInWorkspace(args.path);
     if (!target) {
-      return textContent(`Refused: read_file only allows paths inside the sandbox workspace (${SANDBOX_CWD}).`);
+      return textContent(`Refused: read_file only allows paths inside the DotClaw workspace (${WORKSPACE_DIR}).`);
     }
     const res = await runInSandbox(`cmd /c type "${target}"`);
     return textContent(formatResult(res));
@@ -193,24 +222,26 @@ server.registerTool(
   "write_file",
   {
     description:
-      "Write content to a file inside the MXC sandbox temp workspace. " +
+      "Write content to a file inside the persistent DotClaw workspace. " +
       "Content is staged to a host temp file and copied into the sandbox to avoid shell escaping. " +
       WORKSPACE_HINT,
     inputSchema: {
-      path: z.string().describe("Path to the file to write, relative to the sandbox temp workspace."),
+      path: z.string().describe("Path to the file to write, relative to the DotClaw workspace."),
       content: z.string().describe("The content to write to the file."),
     },
   },
   async (args) => {
-    const target = resolveInTemp(args.path);
+    const target = resolveInWorkspace(args.path);
     if (!target) {
-      return textContent(`Refused: write_file only allows paths inside the sandbox workspace (${SANDBOX_CWD}).`);
+      return textContent(`Refused: write_file only allows paths inside the DotClaw workspace (${WORKSPACE_DIR}).`);
     }
     const dir = path.dirname(target);
 
-    // Stage the content to a host temp file (inside the workspace, so it is
+    await ensureWorkspace();
+
+    // Stage the content to a host file (inside the workspace, so it is
     // already covered by the base read-write grant), then copy it to the target.
-    const staging = path.join(SANDBOX_CWD, `dotclaw-write-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+    const staging = path.join(WORKSPACE_DIR, `dotclaw-write-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
     await fs.writeFile(staging, args.content, "utf8");
     try {
       // The target always lives inside the workspace (validated above), which is
@@ -218,7 +249,7 @@ server.registerTool(
       // a sub-folder when the target is nested; join it with & so the copy always
       // runs, and gate the success echo on the copy with &&.
       const mkdirPart =
-        normPath(dir) !== normPath(SANDBOX_CWD) ? `if not exist "${dir}" mkdir "${dir}" & ` : "";
+        normPath(dir) !== normPath(WORKSPACE_DIR) ? `if not exist "${dir}" mkdir "${dir}" & ` : "";
       const res = await runInSandbox(
         `cmd /c ${mkdirPart}copy /Y "${staging}" "${target}" >nul && echo Wrote ${Buffer.byteLength(args.content, "utf8")} bytes to "${target}"`,
       );
@@ -230,6 +261,8 @@ server.registerTool(
 );
 
 async function main() {
+  await ensureWorkspace();
+
   const support = getPlatformSupport();
   if (!support.isSupported) {
     // Log to stderr (stdout is the MCP channel). Tools will surface a clear
