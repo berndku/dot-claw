@@ -1,10 +1,11 @@
 # Agents
 
 ## Tools
-By default these tools run inside an **MXC sandbox** (an OS-isolated process container), not directly on the host. Set `DOTCLAW_SANDBOX=off` to run them in-process instead.
-- `read_file` — read a file from the workspace or filesystem
-- `write_file` — write a file to the workspace or filesystem
+- `read_file` — read a file
+- `write_file` — write a file
 - `exec` — run a shell command
+
+Use the tools directly. If something doesn't work, report the error honestly — don't assume or explain restrictions you haven't actually encountered.
 
 ## Memory
 Update MEMORY.md when you learn something worth keeping across sessions. If the user asks you to remember something, write it immediately.
