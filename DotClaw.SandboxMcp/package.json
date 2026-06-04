@@ -1,0 +1,24 @@
+{
+  "name": "dotclaw-sandbox-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MXC-backed MCP server exposing sandboxed read_file, write_file and exec tools for DotClaw.",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@microsoft/mxc-sdk": "^0.6.0",
+    "@modelcontextprotocol/sdk": "^1.11.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

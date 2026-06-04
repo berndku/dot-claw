@@ -1,6 +1,7 @@
 # Agents
 
 ## Tools
+By default these tools run inside an **MXC sandbox** (an OS-isolated process container), not directly on the host. Set `DOTCLAW_SANDBOX=off` to run them in-process instead.
 - `read_file` — read a file from the workspace or filesystem
 - `write_file` — write a file to the workspace or filesystem
 - `exec` — run a shell command
