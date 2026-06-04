@@ -29,7 +29,15 @@ public static class DotClawAgentFactory
 
         var memory = new MemoryManager();
         var systemPrompt = ContextBuilder.BuildSystemPrompt(memory, channel, chatId);
-        var tools = AgentTools.CreateAll().Cast<AITool>().ToList();
+
+        var sandboxEnabled = SandboxEnabled();
+        var tools = sandboxEnabled
+            ? await SandboxTools.GetToolsAsync()
+            : AgentTools.CreateAll().Cast<AITool>().ToList();
+
+        Console.WriteLine(sandboxEnabled
+            ? "[DotClaw] tools: MXC sandbox (via MCP)"
+            : "[DotClaw] tools: in-process C# (DOTCLAW_SANDBOX=off)");
 
         var agent = client
             .GetChatClient(ModelId)
@@ -40,6 +48,19 @@ public static class DotClawAgentFactory
                 tools: tools);
 
         return (agent, memory);
+    }
+
+    /// <summary>
+    /// Whether tools run in the MXC sandbox (via the MCP server) or in-process.
+    /// Controlled by the <c>DOTCLAW_SANDBOX</c> env var; defaults to ON.
+    /// Set to <c>0</c>/<c>false</c>/<c>off</c>/<c>no</c> to use the C# tools.
+    /// </summary>
+    private static bool SandboxEnabled()
+    {
+        var v = Environment.GetEnvironmentVariable("DOTCLAW_SANDBOX");
+        if (string.IsNullOrWhiteSpace(v))
+            return true;
+        return v.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");
     }
 
     /// <summary>
