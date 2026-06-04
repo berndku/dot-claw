@@ -2,17 +2,17 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build-console",
+      "label": "build-cli",
       "command": "dotnet",
       "type": "process",
-      "args": ["build", "${workspaceFolder}/DotClaw/DotClaw.csproj", "/consoleloggerparameters:NoSummary;ForceNoAlign"],
+      "args": ["build", "${workspaceFolder}/DotClaw.CLI/DotClaw.CLI.csproj", "/consoleloggerparameters:NoSummary;ForceNoAlign"],
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "build-telegram",
+      "label": "build-gateway",
       "command": "dotnet",
       "type": "process",
-      "args": ["build", "${workspaceFolder}/DotClaw.Telegram/DotClaw.Telegram.csproj", "/consoleloggerparameters:NoSummary;ForceNoAlign"],
+      "args": ["build", "${workspaceFolder}/DotClaw.Gateway/DotClaw.Gateway.csproj", "/consoleloggerparameters:NoSummary;ForceNoAlign"],
       "problemMatcher": "$msCompile"
     },
     {

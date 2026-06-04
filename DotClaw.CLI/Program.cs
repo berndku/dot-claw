@@ -7,6 +7,22 @@ using Spectre.Console;
 // ── Build the MAF Agent (via shared factory) ───────────────────
 var (agent, memory) = await DotClawAgentFactory.CreateAsync();
 
+// ── Heartbeat ──────────────────────────────────────────────────
+using var heartbeat = new HeartbeatRunner(memory, TimeSpan.FromMinutes(30), async message =>
+{
+    AnsiConsole.WriteLine();
+    var panel = new Panel(message)
+    {
+        Header = new PanelHeader("[bold yellow]💓 heartbeat[/]", Justify.Left),
+        Border = BoxBorder.Rounded,
+        BorderStyle = new Style(Color.Yellow),
+    };
+    AnsiConsole.Write(panel);
+    AnsiConsole.Markup("[bold cyan]you[/] "); // re-show prompt
+    await Task.CompletedTask;
+});
+heartbeat.Start();
+
 // ── Session ────────────────────────────────────────────────────
 var sessionStore = new SessionManager("cli:default");
 AgentSession agentSession = await agent.CreateSessionAsync();

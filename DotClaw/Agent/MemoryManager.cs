@@ -46,7 +46,7 @@ public class MemoryManager
     /// </summary>
     public Dictionary<string, string> ReadAll()
     {
-        var files = new[] { "AGENTS.md", "BOOTSTRAP.md", "IDENTITY.md", "MEMORY.md", "SOUL.md", "USER.md" };
+        var files = new[] { "AGENTS.md", "BOOTSTRAP.md", "HEARTBEAT.md", "IDENTITY.md", "MEMORY.md", "SOUL.md", "USER.md" };
         var result = new Dictionary<string, string>();
 
         foreach (var filename in files)

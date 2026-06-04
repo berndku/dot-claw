@@ -14,12 +14,23 @@ public static class AgentTools
 {
     private static readonly string[] DangerousPatterns =
     [
+        // Linux/macOS
         @"rm\s+-rf\s+/",
         @"mkfs",
         @"dd\s+if=",
         @":\(\)\s*\{.*\}",
         @">\s*/dev/sd",
+        // Windows
         @"format\s+[a-zA-Z]:",
+        @"rd\s+/s\s+/q\s+[a-zA-Z]:\\",
+        @"rmdir\s+/s\s+/q\s+[a-zA-Z]:\\",
+        @"del\s+/[fsq].*[a-zA-Z]:\\",
+        @"Remove-Item\s+.*-Recurse.*[a-zA-Z]:\\$",
+        @"reg\s+delete\s+HK",
+        @"diskpart",
+        @"Invoke-Expression\s*.*Invoke-WebRequest",
+        @"iex\s*.*iwr",
+        @"Stop-Process\s+.*-Name\s+(csrss|lsass|wininit|smss)",
     ];
 
     [Description("Read the contents of a file at the given path.")]

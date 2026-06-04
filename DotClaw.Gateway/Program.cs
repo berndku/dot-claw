@@ -2,17 +2,24 @@
 using DotClaw.Session;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 
 // ── Resolve Telegram Bot Token ─────────────────────────────────
-var botToken = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN")
+var config = new ConfigurationBuilder()
+    .AddUserSecrets<Program>()
+    .AddEnvironmentVariables()
+    .Build();
+
+var botToken = config["TELEGRAM_BOT_TOKEN"]
     ?? throw new InvalidOperationException(
         "TELEGRAM_BOT_TOKEN not set.\n" +
-        "1. Open Telegram → talk to @BotFather → /newbot\n" +
-        "2. Copy the token\n" +
-        "3. Set it:  $env:TELEGRAM_BOT_TOKEN = \"your-token\"");
+        "Set it via dotnet user-secrets:\n" +
+        "  dotnet user-secrets set TELEGRAM_BOT_TOKEN \"your-token\"\n" +
+        "Or via environment variable:\n" +
+        "  $env:TELEGRAM_BOT_TOKEN = \"your-token\"");
 
 var bot = new TelegramBotClient(botToken);
 var me = await bot.GetMe();
@@ -21,6 +28,18 @@ Console.WriteLine("Listening for messages... (Ctrl+C to stop)\n");
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+// ── Heartbeat ──────────────────────────────────────────────────
+long? lastChatId = null; // track the most recent chat for heartbeat delivery
+var memory = new MemoryManager();
+using var heartbeat = new HeartbeatRunner(memory, TimeSpan.FromMinutes(30), async message =>
+{
+    if (lastChatId is not { } chatId) return;
+    Console.WriteLine($"💓 Heartbeat → sending to chat {chatId}");
+    foreach (var chunk in ChunkText(message, 4096))
+        await bot.SendMessage(chatId, $"💓 {chunk}", parseMode: ParseMode.None, cancellationToken: cts.Token);
+});
+heartbeat.Start();
 
 // ── Long-polling loop ──────────────────────────────────────────
 var offset = 0;
@@ -39,6 +58,7 @@ while (!cts.Token.IsCancellationRequested)
 
             Console.WriteLine($"[{chat.Id}] {chat.FirstName}: {userText}");
 
+            lastChatId = chat.Id; // remember for heartbeat delivery
             _ = Task.Run(() => HandleMessage(bot, chat, userText, cts.Token));
         }
     }
@@ -115,3 +135,6 @@ static IEnumerable<string> ChunkText(string text, int maxLength)
 
 static string Truncate(string s, int max) =>
     s.Length > max ? s[..max] + "..." : s;
+
+// Anchor for AddUserSecrets<Program>() in top-level statements
+partial class Program { }
