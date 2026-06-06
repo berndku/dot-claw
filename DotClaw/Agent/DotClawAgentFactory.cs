@@ -13,8 +13,8 @@ using Microsoft.Extensions.AI;
 /// </summary>
 public static class DotClawAgentFactory
 {
-    public const string Endpoint = "https://yourresource.openai.azure.com/";
-    public const string ModelDeployment = "gpt-4.1-mini";
+    public const string Endpoint = "https://openai-bgk.openai.azure.com/";
+    public const string ModelDeployment = "gpt-5.4-mini";
 
     /// <summary>
     /// Creates a fully configured AIAgent with tools and system prompt.
