@@ -13,7 +13,7 @@ A C#/.NET port of the [OpenClaw](https://github.com/openclaw) personal AI assist
 - **`Program.cs`** — interactive CLI and single-shot mode
 
 ### Part 2 — Personality: Soul + Identity
-- **`Agent/MemoryManager.cs`** — seeds workspace templates on first run, reads workspace files
+- **`Agent/WorkspaceMemoryProvider.cs`** — seeds workspace templates on first run, reads workspace files, and injects them as context each turn
 - **`Agent/ContextBuilder.cs`** — builds the system prompt with tagged workspace sections
 - **`WorkspaceTemplates/`** — SOUL.md, USER.md, BOOTSTRAP.md, AGENTS.md, MEMORY.md
 
@@ -65,7 +65,7 @@ Program.cs              → Entry point (CLI + single-shot)
                           MAF pipeline: OpenAI → FunctionInvocation → Build
 Agent/
   ContextBuilder.cs     → System prompt assembly from workspace files
-  MemoryManager.cs      → Workspace seeding + file reading
+  WorkspaceMemoryProvider.cs → Workspace seeding + file reading + per-turn context injection
 Tools/
   AgentTools.cs         → All tools as plain C# methods (read_file, write_file, exec)
                           Registered via AIFunctionFactory.Create() — used when DOTCLAW_SANDBOX=off

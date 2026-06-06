@@ -17,7 +17,7 @@ public static class ContextBuilder
     /// The static system-prompt preamble. Safe to bake into the agent's immutable
     /// instructions because none of it changes during a session.
     /// </summary>
-    public static string BuildBaseInstructions(MemoryManager memory, string? channel = null, string? chatId = null)
+    public static string BuildBaseInstructions(WorkspaceMemoryProvider memory, string? channel = null, string? chatId = null)
     {
         var sb = new StringBuilder();
 
@@ -38,7 +38,7 @@ public static class ContextBuilder
     /// Read fresh on every agent invocation so that mid-session edits to MEMORY.md (etc.)
     /// are picked up without rebuilding the agent.
     /// </summary>
-    public static string BuildWorkspaceContext(MemoryManager memory)
+    public static string BuildWorkspaceContext(WorkspaceMemoryProvider memory)
     {
         var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'");
         var sb = new StringBuilder();
