@@ -26,7 +26,7 @@ public static class DotClawAgentFactory
         var client = new AzureOpenAIClient(new Uri(Endpoint), new DefaultAzureCredential());
 
         var memory = new MemoryManager();
-        var systemPrompt = ContextBuilder.BuildSystemPrompt(memory, channel, chatId);
+        var baseInstructions = ContextBuilder.BuildBaseInstructions(memory, channel, chatId);
 
         var sandboxEnabled = SandboxEnabled();
         var tools = sandboxEnabled
@@ -39,13 +39,23 @@ public static class DotClawAgentFactory
 
         Console.WriteLine($"[DotClaw] model: {ModelDeployment} @ {Endpoint}");
 
+        var options = new ChatClientAgentOptions
+        {
+            Name = "DotClaw",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = baseInstructions,
+                Tools = tools,
+            },
+            // Workspace memory is injected fresh on every invocation (see provider docs),
+            // instead of being baked into the immutable instructions at construction time.
+            AIContextProviders = [new WorkspaceMemoryProvider(memory)],
+        };
+
         var agent = client
             .GetChatClient(ModelDeployment)
             .AsIChatClient()
-            .AsAIAgent(
-                instructions: systemPrompt,
-                name: "DotClaw",
-                tools: tools);
+            .AsAIAgent(options);
 
         return (agent, memory);
     }
