@@ -1,262 +1,244 @@
-# DotClaw MakerSpace Session — "Build Your Own AI Agent in 60 Minutes"
+# DotClaw MakerSpace Session — "Meet Link, Your AI Butler"
 
 ## Session Overview
 
-**Duration:** 60 minutes  
-**Audience:** ~10 people, mixed (devs + non-devs), via Teams  
-**Format:** Follow-along workshop — presenter builds, participants follow on their own machines  
-**Goal:** Understand agent loops, build a working AI agent, chat with it on Telegram
+**Duration:** ~60 minutes
+**Audience:** ~10 people, mixed (devs + non-devs)
+**Format:** **Watch-and-follow.** The repo is handed out **pre-built** — nobody writes code. Attendees add two secrets (Azure OpenAI access + a Telegram bot) and follow along on their phones while the presenter narrates the architecture and runs the live demos.
+**Goal:** Understand how a real personal-agent (OpenClaw) works by walking through **DotClaw**, a C#/.NET 9 rebuild on the **Microsoft Agent Framework (MAF)** — agent loop, soul/memory, gateway, proactive butlering (cron + heartbeat), and sandboxed tools.
 
-**Key Idea:** Everyone uses GitHub Copilot CLI to generate the code. You don't need to be a C# expert — the AI writes the code for you. Meta! 🤯
+**The star of the show:** **Link** — a butler. *Submissive + funny.* ("As you wish, sir." / "Right away, sir — though I must say, bold choice.") His persona lives in `SOUL.md` / `IDENTITY.md`, and he *looks after you* via a heartbeat and scheduled reminders.
 
 ---
 
-## Prerequisites (send with invitation!)
+## Prerequisites (send with the invitation!)
 
-Participants need BEFORE the session:
-- [ ] **GitHub CLI** installed and logged in (`gh auth login`)
-- [ ] **.NET 9 SDK** installed (`dotnet --version`)
-- [ ] **VS Code** with C# Dev Kit extension
-- [ ] **GitHub Copilot** (CLI or VS Code extension)
-- [ ] **Telegram** app on phone + bot created via @BotFather (takes 30 seconds)
+Attendees need BEFORE the session:
+- [ ] **.NET 9 SDK** installed (`dotnet --version` → 9.x)
+- [ ] **Azure CLI** installed + `az login` done, with access to the workshop's Azure OpenAI resource (presenter shares how). DotClaw authenticates with `DefaultAzureCredential` — no API keys in code.
+- [ ] **The DotClaw repo**, cloned and building (`dotnet build DotClaw.sln`).
+- [ ] **Telegram** app on phone + a bot created via **@BotFather** (`/newbot`, takes 30 seconds — keep the token handy).
 
-### Quick setup check (participants run this before joining):
+### One-time auth check
 ```powershell
-gh auth status          # Should show "Logged in"
-dotnet --version        # Should show 9.x
+dotnet --version    # 9.x
+az account show     # confirms you're logged in
 ```
 
-### Create Telegram bot (30 seconds):
-1. Open Telegram → search for `BotFather`
-2. Send `/newbot` → pick a name → pick a username (must end in `bot`)
-3. Copy the token — you'll need it in Part 4
-
----
-
-## Part 1: What is an Agent Loop? (10 min) — PRESENTER TALKS
-
-### The Big Idea (3 min)
-
-> "ChatGPT is a chatbot. An Agent is a chatbot that can DO things."
-
-Show this diagram:
-
-```
-┌──────────────────────────────────────────┐
-│              AGENT LOOP                  │
-│                                          │
-│   User ──► LLM ──► Tool Call?            │
-│                      │                   │
-│                Yes ◄─┘──► No ──► Reply   │
-│                 │                        │
-│           Execute Tool                   │
-│                 │                        │
-│           Feed result back to LLM        │
-│                 │                        │
-│           LLM ──► Tool Call? (repeat)    │
-│                                          │
-└──────────────────────────────────────────┘
-```
-
-Key insight: **The LLM decides what to do.** It picks tools, reads results, decides when it's done.
-
-### What is OpenClaw? (3 min)
-
-- Open-source personal AI assistant (github.com/openclaw)
-- Has personality (SOUL.md), memory, tools, multiple chat channels
-- **DotClaw** = our C# rebuild, using Microsoft Agent Framework
-
-### The 3 Building Blocks (4 min)
-
-1. **Tools** — ReadFile, WriteFile, Exec (the agent's hands)
-2. **Memory** — SOUL.md (personality), USER.md (who you are), session history
-3. **Gateway** — How you talk to it (CLI, Telegram, Teams, etc.)
-
-> "We'll build all three today. Everyone on their own machine."
-
----
-
-## Part 2: Build the Agent Loop (20 min) — EVERYONE CODES
-
-### 2a. Scaffold the project (3 min)
-
-**Everyone runs:**
-```powershell
-mkdir DotClaw && cd DotClaw
-dotnet new console
-dotnet add package Microsoft.Agents.AI --prerelease
-dotnet add package Microsoft.Extensions.AI
-dotnet add package Microsoft.Extensions.AI.OpenAI
-dotnet add package Azure.AI.OpenAI --prerelease
-dotnet add package Spectre.Console
-```
-
-> **Explain while they type:** "Microsoft.Agents.AI is the Microsoft Agent Framework. It handles the tool loop for us."
-
-### 2b. Build the tools (5 min)
-
-> **Everyone prompts Copilot (CLI or VS Code chat):**
->
-> "Create a file Tools/AgentTools.cs with three static methods: ReadFile(string path), WriteFile(string path, string content), and Exec(string command). Each should have [Description] attributes. ReadFile reads a file, WriteFile writes content creating dirs as needed, Exec runs a shell command with 60s timeout. Include a static CreateAll() method returning a list of AIFunction via AIFunctionFactory.Create(). Use namespace DotClaw.Tools."
-
-**Presenter shows their result.** Highlight:
-- `[Description]` = how the LLM knows what tools do
-- `AIFunctionFactory.Create()` = MAF turns plain C# into callable tools
-- The LLM **chooses** which tool to call — no if/else needed
-
-### 2c. Wire up the agent (7 min)
-
-> **Everyone prompts:**
->
-> "Replace Program.cs with: 1) A ResolveGitHubToken() method that tries GITHUB_TOKEN env var, then falls back to running `gh auth token`. 2) Create an OpenAI client pointing to endpoint https://models.inference.ai.azure.com with model gpt-4o. 3) Use .AsIChatClient().AsAIAgent() with system prompt 'You are DotClaw, a helpful AI assistant with access to file and shell tools.' and tools from AgentTools.CreateAll(). 4) Interactive console loop: read user input, call agent.RunAsync(), print response. Use Spectre.Console for pretty output."
-
-**Wait for everyone to have a compiling project.** Help anyone stuck.
-
-### 2d. First test! (3 min)
-
-**Everyone runs:**
-```powershell
-dotnet run
-```
-Then type:
-```
-What files are in the current directory?
-```
-
-The agent should call `Exec("dir")` autonomously. 🎉
-
-> **Everyone:** Look at your console — see the tool call? The LLM decided to use that tool on its own.
-
-### 2e. Self-correction demo (2 min)
-
-Type: `List files using ls`
-
-On Windows, `ls` may fail → the agent retries with `dir`.
-
-> "It made a mistake, saw the error, fixed itself. That's the agent loop."
-
-**Pause — anyone stuck? Help them catch up.**
-
----
-
-## Part 3: Personality & Memory (15 min) — EVERYONE CODES
-
-### 3a. The concept (3 min)
-
-> "Our agent works, but it's generic. OpenClaw's secret: it has a *soul*."
-
-Explain:
-- **SOUL.md** — personality, tone, values
-- **IDENTITY.md** — agent's name, emoji
-- **USER.md** — about the human
-- **BOOTSTRAP.md** — first-run onboarding where agent and human meet
-
-### 3b. Add memory + context (7 min)
-
-> **Everyone prompts:**
->
-> "Create Agent/MemoryManager.cs: manages workspace at ~/.dotclaw/workspace/. Constructor seeds template .md files from WorkspaceTemplates/ build output on first run (when SOUL.md doesn't exist). ReadAll() returns Dictionary<string,string> of filename to content for all .md files."
-
-> **Prompt:**
->
-> "Create Agent/ContextBuilder.cs: static BuildSystemPrompt(MemoryManager memory) that builds a system prompt string including current UTC time, workspace path, and appends each workspace file as a ## section. If SOUL.md exists, add instruction to embody its persona."
-
-**Presenter shares their template files** (SOUL.md, BOOTSTRAP.md, etc.) via Teams chat. Participants copy them to `WorkspaceTemplates/` folder.
-
-### 3c. Bootstrap! (5 min) — THE WOW MOMENT
-
-**Everyone:** Delete `~/.dotclaw/` if it exists, then `dotnet run`.
-
-The agent reads BOOTSTRAP.md and asks: *"Hey. I just came online. Who am I? Who are you?"*
-
-**Everyone names their own bot!** Give it a personality, a vibe, an emoji.
-
-> "Look at ~/.dotclaw/workspace/IDENTITY.md — it wrote that file itself."
-
----
-
-## Part 4: Telegram Gateway (10 min) — EVERYONE FOLLOWS
-
-### 4a. The gateway concept (2 min)
-
-> "Same agent, different front door. CLI → Telegram → Teams → anything."
-
-### 4b. Create the Telegram project (3 min)
-
-**Everyone runs:**
-```powershell
-cd ..
-dotnet new console -n DotClaw.Telegram
-cd DotClaw.Telegram
-dotnet add package Telegram.Bot
-dotnet add reference ..\DotClaw\DotClaw.csproj
-```
-
-> **Prompt Copilot:**
->
-> "Replace Program.cs with a Telegram long-polling bot. Read TELEGRAM_BOT_TOKEN from env var. Use Telegram.Bot package to poll for updates. For each text message, create an agent via DotClawAgentFactory.CreateAsync, load session history, call agent.RunAsync(), send response back. Handle messages concurrently with Task.Run."
-
-### 4c. Live on Telegram! (5 min) — SECOND WOW MOMENT
-
-**Everyone:**
+### The two secrets each attendee sets
 ```powershell
 $env:TELEGRAM_BOT_TOKEN = "your-token-from-botfather"
-dotnet run
+# Azure OpenAI endpoint/model live in DotClawAgentFactory.cs (Endpoint, ModelDeployment).
+# Auth is via `az login` (DefaultAzureCredential) — nothing else to set.
 ```
 
-Open Telegram on phone. Message your bot. It responds. 🎉
-
-**Fun things to try:**
-- "What's my name?" (tests USER.md)
-- "Read my SOUL.md"
-- "Remember that I love pizza" → writes to MEMORY.md
-- "Run `dotnet --version`" → tool calling through Telegram!
-
-> **Everyone shows their phone to camera** — 10 bots, 10 personalities. 📱
+> **Note for the presenter:** the Azure OpenAI endpoint + deployment are constants in
+> `DotClaw/Agent/DotClawAgentFactory.cs`. Either grant attendees access to the shared resource,
+> or have them point those two constants at their own.
 
 ---
 
-## Part 5: Wrap-Up (5 min) — PRESENTER TALKS
+## Running order (~60 min; setup runs quietly in the background early)
 
-### What We Built
-- Agent loop with tool calling (Microsoft Agent Framework)
-- Personality & memory (bootstrap ritual)
-- Telegram gateway (no cloud infra needed)
-- Used AI to build AI 🤖
+| # | Part | Time | Attendees |
+|---|------|------|-----------|
+| 1 | The Agent Loop (concept) | 5 min | Listen |
+| 2 | Personality & Memory — meet Link | 10 min | Watch + bootstrap their own |
+| 3 | The Telegram Gateway | 10 min | Message their bot |
+| 4 | Link Looks After You — Cron + Heartbeat | 10 min | Watch + one live reminder |
+| 5 | Tools & the Sandbox (MXC) | 10 min | Watch (presenter-only) |
+| 6 | Wrap-up & what's next | 5 min | Discuss |
 
-### What's Next (Teasers)
-- Heartbeat — agent reaches out proactively
-- Sub-agents — spawning child agents
-- Teams / WhatsApp integration
-- Production deployment to Azure
-
-### Resources (drop in Teams chat)
-- **OpenClaw:** github.com/openclaw
-- **Tutorial:** github.com/jcdeichmann/rebuilding-openclaw-tutorial
-- **MAF:** nuget.org/packages/Microsoft.Agents.AI
-- **GitHub Models:** models.inference.ai.azure.com (free for MS employees)
+*(Buffer ~10 min for questions / catch-up across the session.)*
 
 ---
 
-## Timing Summary
+## Part 1 — The Agent Loop (5 min, concept only)
 
-| Part | Topic | Duration | Everyone codes? |
-|------|-------|----------|-----------------|
-| 1 | What is an Agent Loop? | 10 min | No — listen |
-| 2 | Build the Agent Loop | 20 min | Yes |
-| 3 | Personality & Memory | 15 min | Yes |
-| 4 | Telegram Gateway | 10 min | Yes |
-| 5 | Wrap-Up | 5 min | No — discuss |
-| | **Total** | **60 min** | |
+This is well understood now, so keep it to one diagram and one sentence.
+
+```
+┌──────────────────────────────────────────────┐
+│                  AGENT LOOP                    │
+│   User ─► LLM ─► tool call? ─► run tool        │
+│             ▲                      │           │
+│             └──── result fed back ─┘           │
+│             LLM decides: call again, or reply  │
+└──────────────────────────────────────────────┘
+```
+
+> "The **LLM decides** what to do — it picks tools, reads results, and decides when it's done. MAF runs that loop for us. Everything else today is what you *wrap around* that loop to turn a chatbot into someone who looks after you."
+
+One sentence on lineage: **OpenClaw** is an open-source personal AI assistant (soul, memory, tools, channels, proactive scheduling). **DotClaw** is our C# rebuild on the Microsoft Agent Framework — we're re-implementing OpenClaw's *coolest concepts*, not every channel.
 
 ---
 
-## Presenter Tips
+## Part 2 — Personality & Memory: meet Link (10 min)
 
-1. **Share template files** (SOUL.md etc.) via Teams chat at the start of Part 3
-2. **Have a "rescue repo"** — if someone is stuck, they can clone the finished project
-3. **Delete `~/.dotclaw/`** right before Part 3 for fresh bootstrap
-4. **Telegram token** — remind everyone to have it ready (from prerequisites)
-5. **Slow typers** — the Copilot prompts are the equalizer. Everyone gets working code regardless of typing speed
-6. **If GitHub Models is slow** — have participants use `gpt-4o-mini` as fallback
-7. **The bootstrap is the star** — let people share their bot's name and emoji in Teams chat
+### The concept (3 min)
+> "Our agent works, but a generic assistant is just a search engine with extra steps. OpenClaw's trick is a **soul** — a set of plain Markdown files the agent reads fresh every turn, and **writes to itself**."
+
+The workspace lives at `~/.dotclaw/workspace/`:
+- `SOUL.md` — values, tone, how to behave
+- `IDENTITY.md` — name, creature, vibe, emoji
+- `USER.md` — who the human is
+- `MEMORY.md` — durable notes the agent jots down
+- `BOOTSTRAP.md` — a first-run "who are we?" script (deletes itself when done)
+- `HEARTBEAT.md` — the rule for the proactive pulse (Part 4) — *excluded from normal per-turn context*
+
+### Live bootstrap → Link (4 min) — the wow
+**Everyone:** delete `~/.dotclaw/` (fresh slate), then run the CLI (`dotnet run` in `DotClaw/`).
+
+On first run the agent reads `BOOTSTRAP.md` and wakes up *already leaning butler*:
+
+> "Ah — I appear to have just come online. Link, at your service, sir. I don't yet know the first thing about you. Shall we fix that?"
+
+Attendees chat for a few lines — give it their name, timezone, what they care about. Link **writes `IDENTITY.md` and `USER.md` himself** using the `write_file` tool, then deletes `BOOTSTRAP.md`.
+
+> "Look at `~/.dotclaw/workspace/IDENTITY.md` — *he wrote that.* The persona is reliable on every machine because `BOOTSTRAP.md` stacks the deck toward Link, but the files are written live."
+
+### How it's implemented (3 min)
+Show the three pieces:
+- **`WorkspaceMemoryProvider`** — seeds the templates on first run and, as an MAF `AIContextProvider`, injects the workspace files **fresh on every invocation**. So when Link edits `MEMORY.md` mid-session, the *next* turn already sees it — no rebuild.
+- **`ContextBuilder`** — wraps the files (plus current time) into the system prompt, OpenClaw-style.
+- **The files themselves** — memory is just inspectable Markdown the user owns. Writes are LLM-driven via `write_file`.
+
+---
+
+## Part 3 — The Telegram Gateway (10 min)
+
+### The concept (2 min)
+> "Same Link, different front door. The agent doesn't know or care whether you reached it from the console or your phone."
+
+### Everyone live (5 min) — second wow
+```powershell
+$env:TELEGRAM_BOT_TOKEN = "your-token"
+dotnet run    # in DotClaw.Telegram/
+```
+Open Telegram, message your bot. Link replies in character. Things to try:
+- "What's my name?" (reads `USER.md`)
+- "Remember that I take my coffee black." → he writes `MEMORY.md`
+- "Read me my SOUL.md."
+
+> **Everyone shows their phone** — 10 butlers, 10 slightly different Links. 🎩
+
+### How it's implemented (3 min)
+Show `DotClaw.Telegram/Program.cs` + `DotClawAgentFactory`:
+- A long-poll loop turns each Telegram message into an **`InboundItem`** and writes it to a single **`Channel`**.
+- **One consumer** drains that channel and runs the agent turn (`AgentRunner`), so user turns for a chat are serialized and share one session (`telegram-{chatId}` JSONL history).
+- The same factory builds the agent for *every* surface; the channel/route is just data.
+
+> "Hold that 'single inbound channel, one consumer' picture — in the next part two *more* producers feed it."
+
+---
+
+## Part 4 — Link Looks After You: Cron + Heartbeat (10 min)
+
+**Theme: proactive butlering.** Two distinct ideas, faithful to OpenClaw:
+
+### Beat A — Cron one-shot (the star, ~4 min)
+Have one attendee (or the presenter) message their bot:
+
+> "Link, remind me in 1 minute to stretch."
+
+What happens:
+1. The LLM calls the **`cron_add`** tool with `schedule:"in:1m"`, `topic:"stretch"`. The job — **with the chat's route baked in** — is saved to `~/.dotclaw/cron.json`.
+2. Link confirms in butler voice ("Consider it done, sir. One minute.").
+3. ~60s later the **phone buzzes unprompted** with a freshly-worded reminder.
+
+> "That second buzz wasn't a reply to anything — Link reached out *on his own schedule.*"
+
+**Why it's faithful (1 min narration):** in real OpenClaw an *isolated* cron job spawns its **own throwaway session**, runs the agent turn there, and **delivers itself** (`announce`). DotClaw does exactly this: the due job runs **concurrently** with live chat in a separate `cron-{jobId}` session and calls the message sink itself. The single chat consumer is never blocked.
+
+Optional follow-ups (show control + persistence):
+- "Link, every 2 minutes nag me to sit up straight." → recurring `every:2m`
+- "What reminders do I have?" → `cron_list`
+- "Cancel that one." → `cron_remove` (he stops; the job is gone from `cron.json`, surviving restarts)
+
+### Beat B — the Heartbeat (ambient, ~4 min) — demo on screen
+Enable it (presenter machine):
+```powershell
+$env:DOTCLAW_HEARTBEAT = "on"
+$env:DOTCLAW_HEARTBEAT_INTERVAL = "30"   # seconds (default 45)
+dotnet run    # DotClaw.Telegram
+```
+Put the **console on screen**. Every ~30s the heartbeat ticks, runs a turn against `HEARTBEAT.md`'s rule, and — when there's nothing to say — prints **`HEARTBEAT_OK`** and stays silent. *Watch the silence.*
+
+Then **change Link's world**: edit one line in `~/.dotclaw/workspace/USER.md` or `MEMORY.md` (e.g. add `Status: hunched over the keyboard since 9am, no water`). On the **next tick**, Link *decides* it's worth a word and the phone buzzes with one caring-but-cheeky line.
+
+> "Cron is a scheduled errand. The heartbeat is Link's **pulse** — the thing that lets him act, and stay quiet, on his own. The wow isn't a timer firing; it's watching him *deliberate, choose, and exercise restraint.*"
+
+### How they relate (1 min)
+- **Cron** = a precise, self-delivering scheduled job (isolated session) → great for "remind me in 1 minute."
+- **Heartbeat** = an ambient `PeriodicTimer` that's just **another producer into the same inbound channel** from Part 3 → runs on the one consumer, serialized with your chat. State-aware, not scheduled.
+- Keep only **one** live phone-buzz (the cron). The heartbeat's identity on stage is the **console** (tick → `HEARTBEAT_OK` → flip a fact → speak), so the two beats don't look redundant.
+
+*(Implementation note for the curious: `CronService` is a single self-re-arming timer — a port of OpenClaw's `armTimer` — that sleeps until the next due job, clamped to a ~60s watchdog. Concurrent isolated runs are safe because each uses its own session file; the shared **workspace files** are guarded by a reader/writer lock + atomic writes.)*
+
+---
+
+## Part 5 — Tools & the Sandbox: MXC (10 min, presenter-only)
+
+### The concept (3 min)
+> "Link can run shell commands. Letting an LLM run `exec` on your real machine is terrifying — so DotClaw runs its tools inside **MXC**, a Windows AppContainer, via a small **Node/TypeScript MCP server**. MAF speaks MCP, so the sandbox can be a *different language* than Link (C#), and each tool call runs in a **fresh, ephemeral** sandbox."
+
+Great secondary point: **polyglot tools via MCP** — the agent (C#) and its tools (TypeScript) are decoupled by a protocol.
+
+**Reliability note:** MXC needs one-time **admin host-prep** + Win11 24H2+, so this is **presenter-only**; attendees stay on `DOTCLAW_SANDBOX=off` (in-process C# tools). Lower risk, still a strong watch-the-screen finale.
+
+### Demo — "Link, prove you're in a box" (6 min)
+With sandbox **on** (`DOTCLAW_SANDBOX` unset/on):
+1. **Restricted identity** — ask Link to run `whoami` and probe which drives/paths he can see → AppContainer identity + limited view, not your user.
+2. **Ephemerality** — Link writes a temp file and reads it back in one call (works); a *second* call can't find it → fresh sandbox each time. *"He has no memory of his own crimes, sir."*
+3. **The toggle (the aha)** — flip `DOTCLAW_SANDBOX=off`, rerun the same probe → now it's **your** identity / full access. The visible diff *is* the boundary. *"On = padded room. Off = keys to the house."*
+
+### Honesty slide (1 min)
+MXC is early preview; profiles aren't a hardened security boundary yet. This demonstrates the **pattern** of sandboxed tool execution, not a finished jail.
+
+---
+
+## Part 6 — Wrap-up & what's next (5 min)
+
+### What we walked through
+- The agent loop (MAF runs it)
+- A **soul** that the agent reads fresh and **writes itself** (live bootstrap → Link)
+- One agent, many front doors (the Telegram gateway + single-consumer channel)
+- **Proactive butlering** — precise self-delivering **cron** + ambient, state-aware **heartbeat** with restraint
+- **Sandboxed, polyglot tools** over MCP (MXC)
+
+### What's next (credibility beats)
+- **Managed scheduling in the cloud:** Azure AI **Foundry Routines** (Timer/Recurring triggers) — the hosted equivalent of our cron (note: 5-min minimum interval, Foundry-hosted, no heartbeat concept).
+- **Durable / eternal orchestrations** (Azure Functions Durable Task for MAF) for an enterprise heartbeat loop.
+- **Sub-agents** — Link spawning child agents for bigger jobs.
+- **Hardened MXC** + Azure deployment.
+
+### Resources
+- **OpenClaw** (concepts: soul, memory, cron `armTimer`, heartbeat)
+- **Microsoft Agent Framework** — `Microsoft.Agents.AI`
+- **MCP** — the protocol bridging Link (C#) and the MXC sandbox (TypeScript)
+
+---
+
+## Environment-variable cheat sheet
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `TELEGRAM_BOT_TOKEN` | Telegram gateway bot token (required for Part 3+) | — |
+| `DOTCLAW_SANDBOX` | `off`/`0`/`false` → in-process C# tools; otherwise MXC sandbox | on |
+| `DOTCLAW_HEARTBEAT` | `on`/`1`/`true` → enable the ambient heartbeat | off |
+| `DOTCLAW_HEARTBEAT_INTERVAL` | Heartbeat tick interval, seconds | 45 |
+| `DOTCLAW_SANDBOX_MCP_DIR` | Override path to the built MXC MCP server | (relative to build) |
+
+Azure OpenAI auth is via `az login` (`DefaultAzureCredential`); endpoint + deployment are constants in `DotClawAgentFactory.cs`.
+
+---
+
+## Presenter tips
+
+1. **Pre-flight the cron beat** once before the room arrives — the 1-minute buzz is the emotional peak; make sure your bot delivers.
+2. **Stage the heartbeat flip:** have the `USER.md`/`MEMORY.md` edit ready to paste so the "tick → silence → flip → speak" sequence lands cleanly. Keep `HEARTBEAT.md`'s rule crisp so a clear state change reliably flips it.
+3. **Only one live phone-buzz** (cron). Let the heartbeat live on the **console** so the two don't look like the same trick.
+4. **Sandbox is presenter-only.** Confirm `DOTCLAW_SANDBOX=off` works for attendees beforehand; demo the toggle yourself.
+5. **Fresh slate for bootstrap:** delete `~/.dotclaw/` right before Part 2 so Link wakes up clean.
+6. **Reset between runs:** to re-demo cron from scratch, stop the app and clear `~/.dotclaw/cron.json`.
+7. **Auth gotcha:** the most common attendee failure is `az login` / no access to the Azure OpenAI resource — check this in the prerequisites, not live.
