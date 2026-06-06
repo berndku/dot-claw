@@ -20,12 +20,12 @@ public static class DotClawAgentFactory
     /// Creates a fully configured AIAgent with tools and system prompt.
     /// Authenticates with DefaultAzureCredential (az login, managed identity, etc.).
     /// </summary>
-    public static async Task<(AIAgent Agent, MemoryManager Memory)> CreateAsync(
+    public static async Task<(AIAgent Agent, WorkspaceMemoryProvider Memory)> CreateAsync(
         string? channel = null, string? chatId = null)
     {
         var client = new AzureOpenAIClient(new Uri(Endpoint), new DefaultAzureCredential());
 
-        var memory = new MemoryManager();
+        var memory = new WorkspaceMemoryProvider();
         var baseInstructions = ContextBuilder.BuildBaseInstructions(memory, channel, chatId);
 
         var sandboxEnabled = SandboxEnabled();
@@ -49,7 +49,7 @@ public static class DotClawAgentFactory
             },
             // Workspace memory is injected fresh on every invocation (see provider docs),
             // instead of being baked into the immutable instructions at construction time.
-            AIContextProviders = [new WorkspaceMemoryProvider(memory)],
+            AIContextProviders = [memory],
         };
 
         var agent = client
