@@ -5,16 +5,23 @@ using System.Text;
 /// <summary>
 /// Builds the system prompt from workspace files and runtime context.
 /// Wraps each workspace file in XML-style tags, just like OpenClaw does.
+/// <para>
+/// Split into two parts so that the static preamble can be passed as the agent's
+/// immutable <c>instructions</c>, while the workspace-file section is produced fresh
+/// on every invocation by <see cref="WorkspaceMemoryProvider"/>.
+/// </para>
 /// </summary>
 public static class ContextBuilder
 {
-    public static string BuildSystemPrompt(MemoryManager memory, string? channel = null, string? chatId = null)
+    /// <summary>
+    /// The static system-prompt preamble. Safe to bake into the agent's immutable
+    /// instructions because none of it changes during a session.
+    /// </summary>
+    public static string BuildBaseInstructions(MemoryManager memory, string? channel = null, string? chatId = null)
     {
-        var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'");
         var sb = new StringBuilder();
 
         sb.AppendLine("You are a personal AI assistant.");
-        sb.AppendLine($"Current date/time: {now}");
         sb.AppendLine($"Working directory: {memory.Workspace}");
         sb.AppendLine("Use the tools available to you. If an operation fails, adapt and try a different approach — don't speculate about system limitations you haven't encountered.");
 
@@ -23,7 +30,21 @@ public static class ContextBuilder
         if (!string.IsNullOrEmpty(chatId))
             sb.AppendLine($"Chat ID: {chatId}");
 
-        // Append workspace files as tagged sections
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The dynamic context section: current date/time plus the tagged workspace files.
+    /// Read fresh on every agent invocation so that mid-session edits to MEMORY.md (etc.)
+    /// are picked up without rebuilding the agent.
+    /// </summary>
+    public static string BuildWorkspaceContext(MemoryManager memory)
+    {
+        var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'");
+        var sb = new StringBuilder();
+
+        sb.AppendLine($"Current date/time: {now}");
+
         var workspaceFiles = memory.ReadAll();
 
         if (workspaceFiles.Count > 0)
