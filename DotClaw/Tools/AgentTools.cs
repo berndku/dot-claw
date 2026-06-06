@@ -33,7 +33,18 @@ public static class AgentTools
 
         try
         {
-            var content = await File.ReadAllTextAsync(path);
+            string content;
+            if (Agent.WorkspaceMemoryProvider.IsWorkspacePath(path))
+            {
+                Agent.WorkspaceMemoryProvider.WorkspaceLock.EnterReadLock();
+                try { content = await File.ReadAllTextAsync(path); }
+                finally { Agent.WorkspaceMemoryProvider.WorkspaceLock.ExitReadLock(); }
+            }
+            else
+            {
+                content = await File.ReadAllTextAsync(path);
+            }
+
             AnsiConsole.MarkupLine($"  [green]✓[/] [dim]{Markup.Escape(Truncate(content, 50))}[/]\n");
             return TruncateToolOutput(content, path);
         }
@@ -59,7 +70,19 @@ public static class AgentTools
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
 
-            await File.WriteAllTextAsync(path, content);
+            // Writes to the shared workspace must be atomic and exclusive vs. concurrent readers
+            // (a user turn and a cron turn can run at the same time — see WorkspaceMemoryProvider).
+            if (Agent.WorkspaceMemoryProvider.IsWorkspacePath(path))
+            {
+                Agent.WorkspaceMemoryProvider.WorkspaceLock.EnterWriteLock();
+                try { await AtomicWriteAsync(path, content); }
+                finally { Agent.WorkspaceMemoryProvider.WorkspaceLock.ExitWriteLock(); }
+            }
+            else
+            {
+                await File.WriteAllTextAsync(path, content);
+            }
+
             var result = $"Wrote {content.Length} bytes to {path}";
             AnsiConsole.MarkupLine($"  [green]✓[/] [dim]{Markup.Escape(result)}[/]\n");
             return result;
@@ -130,6 +153,13 @@ public static class AgentTools
         AIFunctionFactory.Create(WriteFile),
         AIFunctionFactory.Create(Exec),
     ];
+
+    private static async Task AtomicWriteAsync(string path, string content)
+    {
+        var tmp = path + ".tmp";
+        await File.WriteAllTextAsync(tmp, content);
+        File.Move(tmp, path, overwrite: true);
+    }
 
     private static string ExpandPath(string path)
     {

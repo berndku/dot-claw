@@ -2,6 +2,8 @@ namespace DotClaw.Agent;
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using DotClaw.Cron;
+using DotClaw.Runtime;
 using DotClaw.Tools;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -21,7 +23,8 @@ public static class DotClawAgentFactory
     /// Authenticates with DefaultAzureCredential (az login, managed identity, etc.).
     /// </summary>
     public static async Task<(AIAgent Agent, WorkspaceMemoryProvider Memory)> CreateAsync(
-        string? channel = null, string? chatId = null)
+        string? channel = null, string? chatId = null,
+        CronService? cron = null, TurnSource source = TurnSource.User)
     {
         var client = new AzureOpenAIClient(new Uri(Endpoint), new DefaultAzureCredential());
 
@@ -29,9 +32,21 @@ public static class DotClawAgentFactory
         var baseInstructions = ContextBuilder.BuildBaseInstructions(memory, channel, chatId);
 
         var sandboxEnabled = SandboxEnabled();
-        var tools = sandboxEnabled
+        var baseTools = sandboxEnabled
             ? await SandboxTools.GetToolsAsync()
             : AgentTools.CreateAll().Cast<AITool>().ToList();
+
+        // Copy: SandboxTools returns a shared cached list — never mutate it in place.
+        var tools = new List<AITool>(baseTools);
+
+        // Route-bound cron tools, only for real user turns. Cron- and heartbeat-triggered turns
+        // must NOT be able to schedule more reminders (anti-recursion).
+        if (source == TurnSource.User && cron is not null
+            && channel is not null && chatId is not null)
+        {
+            var route = new Route(channel, chatId);
+            tools.AddRange(new CronTools(cron, route).AsTools());
+        }
 
         Console.WriteLine(sandboxEnabled
             ? "[DotClaw] tools: MXC sandbox (via MCP)"

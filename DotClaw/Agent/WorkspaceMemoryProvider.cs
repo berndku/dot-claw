@@ -27,14 +27,23 @@ public sealed class WorkspaceMemoryProvider : AIContextProvider
     private static readonly string TemplatesDir = Path.Combine(
         AppDomain.CurrentDomain.BaseDirectory, "WorkspaceTemplates");
 
+    /// <summary>The workspace directory, identical across all instances/sessions.</summary>
+    public static readonly string WorkspaceDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".dotclaw", "workspace");
+
+    // Process-wide guard so concurrent turns (user + cron) never read a torn workspace or
+    // lose a write. Reads share; writes are exclusive. See AgentTools.WriteFile.
+    public static readonly ReaderWriterLockSlim WorkspaceLock = new(LockRecursionPolicy.NoRecursion);
+
+    private static readonly object SeedLock = new();
+
     public string Workspace { get; }
 
     public WorkspaceMemoryProvider()
         : base(null, null, null)
     {
-        Workspace = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".dotclaw", "workspace");
+        Workspace = WorkspaceDir;
         Directory.CreateDirectory(Workspace);
         SeedTemplates();
     }
@@ -43,19 +52,30 @@ public sealed class WorkspaceMemoryProvider : AIContextProvider
     {
         if (!Directory.Exists(TemplatesDir)) return;
 
-        var isFresh = !File.Exists(Path.Combine(Workspace, "SOUL.md"));
-
-        foreach (var templatePath in Directory.GetFiles(TemplatesDir, "*.md"))
+        // Concurrent instances (e.g. a user turn and a cron turn constructing at once) must not
+        // race on first-run seeding.
+        lock (SeedLock)
         {
-            var filename = Path.GetFileName(templatePath);
+            var isFresh = !File.Exists(Path.Combine(Workspace, "SOUL.md"));
 
-            // Only seed BOOTSTRAP.md on first run
-            if (filename == "BOOTSTRAP.md" && !isFresh)
-                continue;
+            foreach (var templatePath in Directory.GetFiles(TemplatesDir, "*.md"))
+            {
+                var filename = Path.GetFileName(templatePath);
 
-            var dest = Path.Combine(Workspace, filename);
-            if (!File.Exists(dest))
-                File.Copy(templatePath, dest);
+                // Only seed BOOTSTRAP.md on first run
+                if (filename == "BOOTSTRAP.md" && !isFresh)
+                    continue;
+
+                var dest = Path.Combine(Workspace, filename);
+                try
+                {
+                    File.Copy(templatePath, dest, overwrite: false);
+                }
+                catch (IOException) when (File.Exists(dest))
+                {
+                    // Already seeded (possibly by a concurrent instance) — fine.
+                }
+            }
         }
     }
 
@@ -67,20 +87,52 @@ public sealed class WorkspaceMemoryProvider : AIContextProvider
         var files = new[] { "AGENTS.md", "BOOTSTRAP.md", "IDENTITY.md", "MEMORY.md", "SOUL.md", "USER.md" };
         var result = new Dictionary<string, string>();
 
-        foreach (var filename in files)
+        // Snapshot all files under a single read lock so a concurrent writer can't give this turn
+        // a half-updated, inconsistent view across files.
+        WorkspaceLock.EnterReadLock();
+        try
         {
-            var path = Path.Combine(Workspace, filename);
-            if (!File.Exists(path)) continue;
-
-            var content = File.ReadAllText(path).Trim();
-            if (!string.IsNullOrEmpty(content))
+            foreach (var filename in files)
             {
-                var key = Path.GetFileNameWithoutExtension(filename).ToLowerInvariant();
-                result[key] = content;
+                var path = Path.Combine(Workspace, filename);
+                if (!File.Exists(path)) continue;
+
+                var content = File.ReadAllText(path).Trim();
+                if (!string.IsNullOrEmpty(content))
+                {
+                    var key = Path.GetFileNameWithoutExtension(filename).ToLowerInvariant();
+                    result[key] = content;
+                }
             }
         }
+        finally { WorkspaceLock.ExitReadLock(); }
 
         return result;
+    }
+
+    /// <summary>
+    /// Reads a single workspace file's raw contents (e.g. HEARTBEAT.md, which is excluded from the
+    /// per-turn context). Returns <c>null</c> if the file is missing or empty.
+    /// </summary>
+    public string? TryReadRaw(string filename)
+    {
+        var path = Path.Combine(Workspace, filename);
+        WorkspaceLock.EnterReadLock();
+        try
+        {
+            if (!File.Exists(path)) return null;
+            var content = File.ReadAllText(path);
+            return string.IsNullOrWhiteSpace(content) ? null : content;
+        }
+        finally { WorkspaceLock.ExitReadLock(); }
+    }
+
+    /// <summary>True if <paramref name="fullPath"/> lives inside the shared workspace directory.</summary>
+    public static bool IsWorkspacePath(string fullPath)
+    {
+        var normalized = Path.GetFullPath(fullPath);
+        var root = Path.GetFullPath(WorkspaceDir);
+        return normalized.StartsWith(root, StringComparison.OrdinalIgnoreCase);
     }
 
     protected override ValueTask<AIContext> ProvideAIContextAsync(
