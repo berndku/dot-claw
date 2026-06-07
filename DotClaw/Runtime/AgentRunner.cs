@@ -3,6 +3,7 @@ namespace DotClaw.Runtime;
 using DotClaw.Agent;
 using DotClaw.Cron;
 using DotClaw.Session;
+using DotClaw.Tools;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -29,18 +30,20 @@ public sealed class AgentRunner
         _cron = cron;
     }
 
-    /// <summary>Runs a User or Heartbeat turn (both live in the route's main session).</summary>
-    public Task RunInboundAsync(InboundItem item, CancellationToken ct) =>
-        item.Source == TurnSource.Heartbeat
-            ? RunHeartbeatAsync(item.Route, ct)
-            : RunUserAsync(item.Route, item.Text, ct);
+    /// <summary>Runs a User, Heartbeat, or Approval-resume turn (all live in the route's main session).</summary>
+    public Task RunInboundAsync(InboundItem item, CancellationToken ct) => item.Source switch
+    {
+        TurnSource.Heartbeat => RunHeartbeatAsync(item.Route, ct),
+        TurnSource.Approval => ResolveApprovalAsync(item.Approval!, item.Approved, ct),
+        _ => RunUserAsync(item.Route, item.Text, ct),
+    };
 
     private async Task RunUserAsync(Route route, string userText, CancellationToken ct)
     {
         await _sink.TypingAsync(route, ct);
 
         var (agent, _) = await DotClawAgentFactory.CreateAsync(
-            route.Channel, route.ChatId, _cron, TurnSource.User);
+            route.Channel, route.ChatId, _cron, TurnSource.User, BuildApprovalPolicy());
         var session = await agent.CreateSessionAsync();
 
         var store = new SessionManager(SessionKey(route));
@@ -48,14 +51,79 @@ public sealed class AgentRunner
         history.Add(new ChatMessage(ChatRole.User, userText));
 
         var response = await agent.RunAsync(history, session);
-        var text = response.Text ?? "(no response)";
-
-        store.Append([
-            new { role = "user", content = userText },
-            new { role = "assistant", content = text },
-        ]);
-        await _sink.SendAsync(route, text, ct);
+        await DeliverOrRequestApprovalAsync(route, SessionKey(route), userText, history, response, ct);
     }
+
+    /// <summary>
+    /// Resumes a parked approval after the human tapped Approve/Deny. The pending entry is removed
+    /// by the caller (so the button can't be double-handled); we rebuild the agent on a fresh
+    /// session and replay the stored messages plus the approval response — correlation is by CallId,
+    /// so a fresh session is fine.
+    /// </summary>
+    public async Task ResolveApprovalAsync(PendingApproval pending, bool approved, CancellationToken ct)
+    {
+        var (agent, _) = await DotClawAgentFactory.CreateAsync(
+            pending.Route.Channel, pending.Route.ChatId, _cron, TurnSource.User, BuildApprovalPolicy());
+        var session = await agent.CreateSessionAsync();
+
+        var messages = new List<ChatMessage>(pending.Messages)
+        {
+            new(ChatRole.User, [pending.Request.CreateResponse(approved)]),
+        };
+
+        var response = await agent.RunAsync(messages, session);
+        await DeliverOrRequestApprovalAsync(
+            pending.Route, pending.SessionKey, pending.UserText, messages, response, ct);
+    }
+
+    /// <summary>
+    /// Shared tail for user turns and approval resumes: if the run produced a tool-approval request,
+    /// park it and ask the human (no persistence yet); otherwise persist the exchange and deliver.
+    /// </summary>
+    private async Task DeliverOrRequestApprovalAsync(
+        Route route, string sessionKey, string userText,
+        List<ChatMessage> sentMessages, AgentResponse response, CancellationToken ct)
+    {
+        var request = response.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .FirstOrDefault();
+
+        if (request is null)
+        {
+            var text = response.Text ?? "(no response)";
+            new SessionManager(sessionKey).Append([
+                new { role = "user", content = userText },
+                new { role = "assistant", content = text },
+            ]);
+            await _sink.SendAsync(route, text, ct);
+            return;
+        }
+
+        // Park the live message list (including the assistant request) so the button tap can resume.
+        var working = new List<ChatMessage>(sentMessages);
+        working.AddRange(response.Messages);
+
+        var token = Guid.NewGuid().ToString("N")[..16];
+        ApprovalStore.Items[token] =
+            new PendingApproval(token, working, request, route, sessionKey, userText);
+
+        var call = request.ToolCall as FunctionCallContent;
+        var toolName = call?.Name ?? "tool";
+        var argsText = call?.Arguments is { Count: > 0 } args
+            ? string.Join("\n", args.Select(kv => $"• {kv.Key}: {kv.Value}"))
+            : "";
+
+        await _sink.RequestApprovalAsync(route, new ApprovalRequest(token, toolName, argsText), ct);
+    }
+
+    /// <summary>
+    /// Approval policy for interactive user turns, sourced from <c>DOTCLAW_APPROVAL_TOOLS</c>
+    /// (defaulting to <c>send_message</c>). Heartbeat and cron turns deliberately use no policy:
+    /// there is no human present to tap a button, so their tool calls run ungated.
+    /// </summary>
+    private static ApprovalPolicy BuildApprovalPolicy() =>
+        ApprovalPolicy.FromEnvironment(defaults: [MessagingTools.ToolName]);
 
     private async Task RunHeartbeatAsync(Route route, CancellationToken ct)
     {

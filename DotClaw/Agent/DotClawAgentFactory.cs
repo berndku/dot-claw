@@ -31,12 +31,15 @@ public static class DotClawAgentFactory
     /// </summary>
     public static async Task<(AIAgent Agent, WorkspaceMemoryProvider Memory)> CreateAsync(
         string? channel = null, string? chatId = null,
-        CronService? cron = null, TurnSource source = TurnSource.User)
+        CronService? cron = null, TurnSource source = TurnSource.User,
+        ApprovalPolicy? approvalPolicy = null)
     {
         var client = new AzureOpenAIClient(new Uri(Endpoint), new DefaultAzureCredential());
 
         var memory = new WorkspaceMemoryProvider();
         var baseInstructions = ContextBuilder.BuildBaseInstructions(memory, channel, chatId);
+
+        var policy = approvalPolicy ?? ApprovalPolicy.None;
 
         var sandboxEnabled = SandboxEnabled();
         var baseTools = sandboxEnabled
@@ -44,7 +47,8 @@ public static class DotClawAgentFactory
             : AgentTools.CreateAll().Cast<AITool>().ToList();
 
         // Copy: SandboxTools returns a shared cached list — never mutate it in place.
-        var tools = new List<AITool>(baseTools);
+        // Always offer the send_message demo tool alongside the sandbox/in-process tools.
+        var tools = new List<AITool>(baseTools) { MessagingTools.Create() };
 
         // Route-bound cron tools, only for real user turns. Cron- and heartbeat-triggered turns
         // must NOT be able to schedule more reminders (anti-recursion).
@@ -55,9 +59,14 @@ public static class DotClawAgentFactory
             tools.AddRange(new CronTools(cron, route).AsTools());
         }
 
+        // Gate the tools named by the policy by wrapping them in ApprovalRequiredAIFunction.
+        tools = ApplyApprovalPolicy(tools, policy);
+
         Console.WriteLine(sandboxEnabled
             ? "[DotClaw] tools: MXC sandbox (via MCP)"
             : "[DotClaw] tools: in-process C# (DOTCLAW_SANDBOX=off)");
+        if (!policy.IsEmpty)
+            Console.WriteLine("[DotClaw] approval-required tools: " + string.Join(", ", policy.GatedNames));
 
         Console.WriteLine($"[DotClaw] model: {ModelDeployment} @ {Endpoint}");
 
@@ -68,6 +77,9 @@ public static class DotClawAgentFactory
             {
                 Instructions = baseInstructions,
                 Tools = tools,
+                // When gating is active, force sequential tool calls so each approval is
+                // isolated (otherwise one gated call in a batch gates the whole batch).
+                AllowMultipleToolCalls = policy.IsEmpty ? null : false,
             },
             // Workspace memory is injected fresh on every invocation (see provider docs),
             // instead of being baked into the immutable instructions at construction time.
@@ -80,6 +92,18 @@ public static class DotClawAgentFactory
             .AsAIAgent(options);
 
         return (agent, memory);
+    }
+
+    private static List<AITool> ApplyApprovalPolicy(IEnumerable<AITool> tools, ApprovalPolicy policy)
+    {
+        if (policy.IsEmpty)
+            return tools.ToList();
+
+        return tools
+            .Select(t => t is AIFunction f && policy.RequiresApproval(f.Name)
+                ? (AITool)new ApprovalRequiredAIFunction(f)
+                : t)
+            .ToList();
     }
 
     private static bool SandboxEnabled()

@@ -14,4 +14,11 @@ public enum TurnSource
 
     /// <summary>A scheduled reminder firing in its own isolated, throwaway session.</summary>
     Cron,
+
+    /// <summary>
+    /// A human's Approve/Deny decision resuming a parked tool-approval. Runs in the user's main
+    /// session, so it flows through the same single consumer as User/Heartbeat turns to avoid
+    /// concurrent writes to that session's history.
+    /// </summary>
+    Approval,
 }

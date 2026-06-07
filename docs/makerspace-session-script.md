@@ -46,6 +46,7 @@ $env:TELEGRAM_BOT_TOKEN = "your-token-from-botfather"
 | 2 | Personality & Memory — meet Link | 10 min | Watch + bootstrap their own |
 | 3 | The Telegram Gateway | 10 min | Message their bot |
 | 4 | Link Looks After You — Cron + Heartbeat | 10 min | Watch + one live reminder |
+| 4.5 | Approve Before It Acts (HITL) | 6 min | Watch + tap Approve/Deny |
 | 5 | Tools & the Sandbox (MXC) | 10 min | Watch (presenter-only) |
 | 6 | Wrap-up & what's next | 5 min | Discuss |
 
@@ -177,6 +178,71 @@ Then **change Link's world**: edit one line in `~/.dotclaw/workspace/USER.md` or
 
 ---
 
+## Part 4.5 — Approve Before It Acts on Your Behalf (6 min)
+
+### The concept (1 min)
+So far Link *acts immediately*. But some actions are risky — sending a message, deleting a
+file, running a shell command. **Human-in-the-loop (HITL) approval** puts a person in the
+loop: the agent **asks first**, and only acts after you say yes.
+
+MAF makes this a one-liner: wrap a tool in **`ApprovalRequiredAIFunction`**. The wrapped tool
+is *not* executed — the run returns a `ToolApprovalRequestContent`. You inspect it, ask the
+human, and reply with `request.CreateResponse(approved)`. The `FunctionInvokingChatClient`
+(already in our pipeline) then either runs the real tool (approved) or backs off (denied).
+**Which tools require approval is configuration, not code** — DotClaw reads `DOTCLAW_APPROVAL_TOOLS`
+(comma-separated tool names; defaults to `send_message`).
+
+### The demo tool: `send_message` (1 min)
+DotClaw ships a self-contained **`send_message`** tool — "text a contact on your behalf." The
+send is *simulated*: it prints a line and appends to `~/.dotclaw/outbox.log`, so the side
+effect is **visible and only happens after approval**.
+
+### CLI demo (2 min)
+```powershell
+cd DotClaw
+dotnet run -- "text my manager Sarah that I'll be 10 minutes late to standup"
+```
+Link drafts the message, then **pauses**:
+```
+┌─ 🔐 approval required ───────────────────────┐
+│ tool       send_message                      │
+│ recipient  Sarah                             │
+│ message    I'll be 10 minutes late to standup│
+└──────────────────────────────────────────────┘
+Approve send_message? [y/n]:
+```
+- **y** → `✅ Message sent to Sarah` + a new line in `~/.dotclaw/outbox.log`.
+- **n** → Link backs off, **no** outbox line.
+
+**Configurability (the "aha"):** flip the env var and shell commands need approval too:
+```powershell
+$env:DOTCLAW_APPROVAL_TOOLS = "send_message,exec"
+dotnet run -- "run dotnet --version"   # now exec asks first
+```
+
+### Telegram demo (2 min) — THE WOW MOMENT 📱
+With the gateway running, message your bot:
+
+> "Tell my manager Sarah I'll be 10 minutes late"
+
+Instead of just replying, the bot sends the drafted action with two buttons:
+
+`[ ✅ Approve ]  [ ❌ Deny ]`
+
+Tap **Approve** → it sends (buttons freeze to "✅ Approved", outbox line appears).
+Tap **Deny** → Link backs off. **You just approved your agent's action from your phone.**
+
+> Same `CreateResponse(bool)` semantics as the CLI — only the input channel differs (button
+> tap vs. console `y/n`). Because the gateway can't block a thread waiting for a tap, the turn
+> is *parked*: the approval request becomes a Telegram update, the tap is a second update
+> (`CallbackQuery`), and the parked state (in-memory, demo-grade) resumes the agent run on the
+> same single consumer as normal turns (so history writes stay serialized). Two caveats: a bot
+> restart drops outstanding approvals (handled gracefully as "expired"), and you should resolve
+> a pending approval before firing off another message in the same chat — one approval in flight
+> at a time keeps the demo crisp.
+
+---
+
 ## Part 5 — Tools & the Sandbox: MXC (10 min, presenter-only)
 
 ### The concept (3 min)
@@ -204,11 +270,13 @@ MXC is early preview; profiles aren't a hardened security boundary yet. This dem
 - A **soul** that the agent reads fresh and **writes itself** (live bootstrap → Link)
 - One agent, many front doors (the Telegram gateway + single-consumer channel)
 - **Proactive butlering** — precise self-delivering **cron** + ambient, state-aware **heartbeat** with restraint
+- **Human-in-the-loop approval** — configurable per tool (CLI `y/n` + Telegram Approve/Deny buttons)
 - **Sandboxed, polyglot tools** over MCP (MXC)
 
 ### What's next (credibility beats)
 - **Managed scheduling in the cloud:** Azure AI **Foundry Routines** (Timer/Recurring triggers) — the hosted equivalent of our cron (note: 5-min minimum interval, Foundry-hosted, no heartbeat concept).
 - **Durable / eternal orchestrations** (Azure Functions Durable Task for MAF) for an enterprise heartbeat loop.
+- **Persisted approvals** — survive a restart (today's pending approvals are in-memory).
 - **Sub-agents** — Link spawning child agents for bigger jobs.
 - **Hardened MXC** + Azure deployment.
 
@@ -224,6 +292,7 @@ MXC is early preview; profiles aren't a hardened security boundary yet. This dem
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `TELEGRAM_BOT_TOKEN` | Telegram gateway bot token (required for Part 3+) | — |
+| `DOTCLAW_APPROVAL_TOOLS` | Comma-separated tool names that require human approval | `send_message` |
 | `DOTCLAW_SANDBOX` | `off`/`0`/`false` → in-process C# tools; otherwise MXC sandbox | on |
 | `DOTCLAW_HEARTBEAT` | `on`/`1`/`true` → enable the ambient heartbeat | off |
 | `DOTCLAW_HEARTBEAT_INTERVAL` | Heartbeat tick interval, seconds | 45 |
