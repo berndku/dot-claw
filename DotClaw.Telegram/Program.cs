@@ -43,9 +43,9 @@ var voiceProcessor = new TelegramVoiceProcessor(
 var voiceTasks = new List<Task>();
 
 if (speechTranscriber is null)
-    Console.WriteLine("[voice] disabled (set AzureSpeech:Endpoint and AzureSpeech:Key to enable Telegram voice)");
+    Console.WriteLine("[voice] disabled (set AzureSpeech:Endpoint to enable Telegram voice)");
 else
-    Console.WriteLine($"[voice] enabled via Azure Speech Fast Transcription ({speechTranscriber.LocaleSummary})");
+    Console.WriteLine($"[voice] enabled via Azure Speech Fast Transcription ({speechTranscriber.LocaleSummary}, {speechTranscriber.AuthenticationSummary})");
 
 // The most recently active chat — the heartbeat checks in on whoever spoke last.
 Route? lastRoute = null;

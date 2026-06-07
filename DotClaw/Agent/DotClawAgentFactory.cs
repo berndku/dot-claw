@@ -1,5 +1,6 @@
 namespace DotClaw.Agent;
 
+using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using DotClaw.Cron;
@@ -11,7 +12,7 @@ using Microsoft.Extensions.AI;
 /// <summary>
 /// Shared factory for creating the DotClaw AIAgent.
 /// Used by both the CLI (Program.cs) and Teams gateway (DotClawBot.cs).
-/// Uses DefaultAzureCredential — log in via `az login` before running.
+/// Uses keyless authentication by default, with optional API key auth for local development.
 /// </summary>
 public static class DotClawAgentFactory
 {
@@ -27,14 +28,17 @@ public static class DotClawAgentFactory
 
     /// <summary>
     /// Creates a fully configured AIAgent with tools and system prompt.
-    /// Authenticates with DefaultAzureCredential (az login, managed identity, etc.).
+    /// Authenticates with DefaultAzureCredential unless AzureOpenAI:Key is configured.
     /// </summary>
     public static async Task<(AIAgent Agent, WorkspaceMemoryProvider Memory)> CreateAsync(
         string? channel = null, string? chatId = null,
         CronService? cron = null, TurnSource source = TurnSource.User,
         ApprovalPolicy? approvalPolicy = null)
     {
-        var client = new AzureOpenAIClient(new Uri(Endpoint), new DefaultAzureCredential());
+        var key = AzureOpenAIKey();
+        var client = string.IsNullOrWhiteSpace(key)
+            ? new AzureOpenAIClient(new Uri(Endpoint), new DefaultAzureCredential())
+            : new AzureOpenAIClient(new Uri(Endpoint), new AzureKeyCredential(key));
 
         var memory = new WorkspaceMemoryProvider();
         var baseInstructions = ContextBuilder.BuildBaseInstructions(memory, channel, chatId);
@@ -69,6 +73,9 @@ public static class DotClawAgentFactory
             Console.WriteLine("[DotClaw] approval-required tools: " + string.Join(", ", policy.GatedNames));
 
         Console.WriteLine($"[DotClaw] model: {ModelDeployment} @ {Endpoint}");
+        Console.WriteLine(string.IsNullOrWhiteSpace(key)
+            ? "[DotClaw] Azure OpenAI auth: Microsoft Entra ID"
+            : "[DotClaw] Azure OpenAI auth: key");
 
         var options = new ChatClientAgentOptions
         {
@@ -112,5 +119,15 @@ public static class DotClawAgentFactory
         if (string.IsNullOrWhiteSpace(v))
             return true;
         return v.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");
+    }
+
+    private static string? AzureOpenAIKey()
+    {
+        var value = AppConfiguration.Instance["AzureOpenAI:Key"];
+        if (!string.IsNullOrWhiteSpace(value))
+            return value;
+
+        value = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
+        return string.IsNullOrWhiteSpace(value) ? Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") : value;
     }
 }

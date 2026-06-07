@@ -64,7 +64,7 @@ internal sealed class TelegramVoiceProcessor
         {
             await _sink.SendAsync(
                 route,
-                "Voice messages need Azure Speech configuration. Set AzureSpeech:Endpoint and AzureSpeech:Key in appsettings.local.json, then restart the gateway.",
+                "Voice messages need Azure Speech configuration. Set AzureSpeech:Endpoint in appsettings.local.json, then restart the gateway.",
                 ct);
             return;
         }
