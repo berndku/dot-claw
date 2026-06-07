@@ -1,5 +1,7 @@
 namespace DotClaw.Telegram;
 
+using Azure.Core;
+using Azure.Identity;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -8,18 +10,27 @@ using DotClaw.Runtime;
 
 internal sealed class AzureSpeechTranscriber
 {
+    private const string CognitiveServicesScope = "https://cognitiveservices.azure.com/.default";
+
     private static readonly HttpClient Http = new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly Uri _endpoint;
-    private readonly string _subscriptionKey;
+    private readonly string? _subscriptionKey;
+    private readonly TokenCredential? _credential;
     private readonly string[] _locales;
     private readonly string _apiVersion;
 
-    private AzureSpeechTranscriber(Uri endpoint, string subscriptionKey, string[] locales, string apiVersion)
+    private AzureSpeechTranscriber(
+        Uri endpoint,
+        string? subscriptionKey,
+        TokenCredential? credential,
+        string[] locales,
+        string apiVersion)
     {
         _endpoint = NormalizeEndpoint(endpoint);
         _subscriptionKey = subscriptionKey;
+        _credential = credential;
         _locales = locales
             .Where(locale => !string.IsNullOrWhiteSpace(locale))
             .Select(locale => locale.Trim())
@@ -33,20 +44,26 @@ internal sealed class AzureSpeechTranscriber
 
     public string LocaleSummary => string.Join(",", _locales);
 
+    public string AuthenticationSummary => string.IsNullOrWhiteSpace(_subscriptionKey)
+        ? "Microsoft Entra ID"
+        : "key";
+
     public static AzureSpeechTranscriber? FromConfiguration()
     {
         var endpoint = ConfigValue("AzureSpeech:Endpoint", "AZURE_SPEECH_ENDPOINT");
-        var key = ConfigValue("AzureSpeech:Key", "AZURE_SPEECH_KEY");
+        var key = ConfigValue("AzureSpeech:Key", "AZURE_SPEECH_API_KEY", "AZURE_SPEECH_KEY");
 
-        if (string.IsNullOrWhiteSpace(endpoint) && string.IsNullOrWhiteSpace(key))
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            if (!string.IsNullOrWhiteSpace(key))
+                throw new InvalidOperationException("Voice transcription requires AzureSpeech:Endpoint when AzureSpeech:Key is configured.");
             return null;
-
-        if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(key))
-            throw new InvalidOperationException("Voice transcription requires both AzureSpeech:Endpoint and AzureSpeech:Key.");
+        }
 
         return new AzureSpeechTranscriber(
             new Uri(endpoint.Trim(), UriKind.Absolute),
-            key.Trim(),
+            string.IsNullOrWhiteSpace(key) ? null : key.Trim(),
+            string.IsNullOrWhiteSpace(key) ? new DefaultAzureCredential() : null,
             DotClawConfig.SpeechLocales,
             DotClawConfig.SpeechApiVersion);
     }
@@ -76,7 +93,7 @@ internal sealed class AzureSpeechTranscriber
         {
             Content = form
         };
-        request.Headers.Add("Ocp-Apim-Subscription-Key", _subscriptionKey);
+        await ApplyAuthenticationAsync(request, ct);
 
         using var response = await Http.SendAsync(request, ct);
         var responseBody = await response.Content.ReadAsStringAsync(ct);
@@ -106,10 +123,35 @@ internal sealed class AzureSpeechTranscriber
     private static Uri NormalizeEndpoint(Uri endpoint) =>
         new(endpoint.ToString().TrimEnd('/') + "/");
 
-    private static string? ConfigValue(string key, string legacyEnvironmentVariable)
+    private async Task ApplyAuthenticationAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(_subscriptionKey))
+        {
+            request.Headers.Add("Ocp-Apim-Subscription-Key", _subscriptionKey);
+            return;
+        }
+
+        if (_credential is null)
+            throw new AzureSpeechTranscriptionException("Azure Speech authentication is not configured.");
+
+        var token = await _credential.GetTokenAsync(new TokenRequestContext([CognitiveServicesScope]), ct);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+    }
+
+    private static string? ConfigValue(string key, params string[] legacyEnvironmentVariables)
     {
         var value = AppConfiguration.Instance[key];
-        return string.IsNullOrWhiteSpace(value) ? Environment.GetEnvironmentVariable(legacyEnvironmentVariable) : value;
+        if (!string.IsNullOrWhiteSpace(value))
+            return value;
+
+        foreach (var variable in legacyEnvironmentVariables)
+        {
+            value = Environment.GetEnvironmentVariable(variable);
+            if (!string.IsNullOrWhiteSpace(value))
+                return value;
+        }
+
+        return null;
     }
 
     private static string Truncate(string value, int maxChars)

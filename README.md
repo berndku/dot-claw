@@ -20,7 +20,8 @@ A C#/.NET port of the [OpenClaw](https://github.com/openclaw) personal AI assist
 ## Requirements
 
 - .NET 10.0+
-- Azure OpenAI resource (with `az login` for authentication)
+- Azure OpenAI resource. Use Microsoft Entra ID authentication (`az login` locally or managed identity
+  in Azure) or configure an optional API key.
 
 ## Configuration
 
@@ -42,7 +43,8 @@ Edit `appsettings.local.json`:
 {
   "AzureOpenAI": {
     "Endpoint": "https://your-resource.openai.azure.com/",
-    "Model": "gpt-4o-mini"
+    "Model": "gpt-4o-mini",
+    "Key": ""
   },
   "Telegram": {
     "BotToken": "123456:ABC-your-token"
@@ -59,8 +61,13 @@ Environment variable overrides (e.g. in CI):
 ```powershell
 $env:AzureOpenAI__Endpoint = "https://..."
 $env:AzureOpenAI__Model = "gpt-4o"
+$env:AzureOpenAI__Key = ""   # optional; leave empty for Microsoft Entra ID
 $env:Telegram__BotToken = "123456:ABC-..."
 ```
+
+Azure service keys are optional. When `AzureOpenAI:Key` or `AzureSpeech:Key` is empty, DotClaw uses
+`DefaultAzureCredential`, so local development can use `az login` and Azure hosting can use managed
+identity. If you provide a key, DotClaw uses key-based authentication for that service instead.
 
 ## Setup
 
@@ -194,7 +201,7 @@ setup hint. To enable voice:
   },
   "AzureSpeech": {
     "Endpoint": "https://<resource-name>.cognitiveservices.azure.com",
-    "Key": "<speech-resource-key>",
+    "Key": "",
     "ApiVersion": "2025-10-15",
     "Locales": [ "de-DE", "en-US" ]
   }
@@ -202,11 +209,15 @@ setup hint. To enable voice:
 '@ | Set-Content appsettings.local.json
 ```
 
-`appsettings.local.json` is gitignored and should hold real secrets. Environment variables override
-settings, for example `AzureSpeech__Endpoint`, `AzureSpeech__Key`, and
-`Telegram__Voice__TranscriptionConcurrency`. The older `AZURE_SPEECH_ENDPOINT`,
-`AZURE_SPEECH_KEY`, `DOTCLAW_SPEECH_LOCALES`, `DOTCLAW_SPEECH_API_VERSION`, and
-`DOTCLAW_VOICE_TRANSCRIPTION_CONCURRENCY` variables are still accepted as compatibility fallbacks.
+`appsettings.local.json` is gitignored and should hold real secrets if you choose key-based auth.
+Environment variables override settings, for example `AzureSpeech__Endpoint`, `AzureSpeech__Key`,
+and `Telegram__Voice__TranscriptionConcurrency`. The older `AZURE_SPEECH_ENDPOINT`,
+`AZURE_SPEECH_API_KEY`, `AZURE_SPEECH_KEY`, `DOTCLAW_SPEECH_LOCALES`, `DOTCLAW_SPEECH_API_VERSION`,
+and `DOTCLAW_VOICE_TRANSCRIPTION_CONCURRENCY` variables are still accepted as compatibility fallbacks.
+
+For keyless Speech auth, grant the signed-in user or managed identity an Azure AI Services/Speech data
+plane role such as **Cognitive Services Speech User** on the Speech resource. To use key-based auth
+instead, set `AzureSpeech:Key`.
 
 Optional tuning in `appsettings.local.json`:
 
