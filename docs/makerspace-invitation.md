@@ -16,7 +16,7 @@ We're keeping it cozy – only 10 seats available on a first come, first served 
 🛠️ Prerequisites
 Before we kick off, please ensure you have the following ready:
 ✔️ GitHub CLI — installed and logged in (gh auth login)
-✔️ .NET 9 SDK — https://dotnet.microsoft.com/download/dotnet/9.0
+✔️ .NET 10 SDK — https://dotnet.microsoft.com/download/dotnet/10.0
 ✔️ VS Code + C# Dev Kit extension
 ✔️ GitHub Copilot (CLI or VS Code extension)
 ✔️ Telegram on your phone — create a bot via @BotFather (send /newbot, save the token)

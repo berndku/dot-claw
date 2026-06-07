@@ -19,7 +19,7 @@ A C#/.NET port of the [OpenClaw](https://github.com/openclaw) personal AI assist
 
 ## Requirements
 
-- .NET 9.0+
+- .NET 10.0+
 - Azure OpenAI resource (with `az login` for authentication)
 
 ## Configuration
