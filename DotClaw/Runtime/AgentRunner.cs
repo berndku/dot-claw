@@ -20,6 +20,7 @@ using Microsoft.Extensions.AI;
 public sealed class AgentRunner
 {
     private const string HeartbeatOk = "HEARTBEAT_OK";
+    private const int MaxHistoryTokens = 100_000;
 
     private readonly IMessageSink _sink;
     private readonly CronService _cron;
@@ -195,7 +196,7 @@ public sealed class AgentRunner
             if (role is "user") history.Add(new ChatMessage(ChatRole.User, content));
             else if (role is "assistant") history.Add(new ChatMessage(ChatRole.Assistant, content));
         }
-        return history;
+        return HistoryTrimmer.Trim(history, MaxHistoryTokens);
     }
 
     private static string BuildHeartbeatPrompt(WorkspaceMemoryProvider memory)
