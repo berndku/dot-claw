@@ -5,7 +5,7 @@
 **Duration:** ~60 minutes
 **Audience:** ~10 people, mixed (devs + non-devs)
 **Format:** **Watch-and-follow.** The repo is handed out **pre-built** — nobody writes code. Attendees add two secrets (Azure OpenAI access + a Telegram bot) and follow along on their phones while the presenter narrates the architecture and runs the live demos.
-**Goal:** Understand how a real personal-agent (OpenClaw) works by walking through **DotClaw**, a C#/.NET 9 rebuild on the **Microsoft Agent Framework (MAF)** — agent loop, soul/memory, gateway, proactive butlering (cron + heartbeat), and sandboxed tools.
+**Goal:** Understand how a real personal-agent (OpenClaw) works by walking through **DotClaw**, a C#/.NET 10 rebuild on the **Microsoft Agent Framework (MAF)** — agent loop, soul/memory, gateway, proactive butlering (cron + heartbeat), and sandboxed tools.
 
 **The star of the show:** **Link** — a butler. *Submissive + funny.* ("As you wish, sir." / "Right away, sir — though I must say, bold choice.") His persona lives in `SOUL.md` / `IDENTITY.md`, and he *looks after you* via a heartbeat and scheduled reminders.
 
@@ -14,14 +14,14 @@
 ## Prerequisites (send with the invitation!)
 
 Attendees need BEFORE the session:
-- [ ] **.NET 9 SDK** installed (`dotnet --version` → 9.x)
+- [ ] **.NET 10 SDK** installed (`dotnet --version` → 10.x)
 - [ ] **Azure CLI** installed + `az login` done, with access to the workshop's Azure OpenAI resource (presenter shares how). DotClaw authenticates with `DefaultAzureCredential` — no API keys in code.
 - [ ] **The DotClaw repo**, cloned and building (`dotnet build DotClaw.sln`).
 - [ ] **Telegram** app on phone + a bot created via **@BotFather** (`/newbot`, takes 30 seconds — keep the token handy).
 
 ### One-time auth check
 ```powershell
-dotnet --version    # 9.x
+dotnet --version    # 10.x
 az account show     # confirms you're logged in
 ```
 
