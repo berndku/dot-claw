@@ -22,6 +22,60 @@ public static class DotClawConfig
         }
     }
 
+    /// <summary>Locales sent to Azure Speech Fast Transcription. Defaults to German + English.</summary>
+    public static string[] SpeechLocales
+    {
+        get
+        {
+            var configuredLocales = AppConfiguration.Instance
+                .GetSection("AzureSpeech:Locales")
+                .GetChildren()
+                .Select(section => section.Value)
+                .Where(locale => !string.IsNullOrWhiteSpace(locale))
+                .Select(locale => locale!.Trim())
+                .ToArray();
+            if (configuredLocales.Length > 0)
+                return configuredLocales;
+
+            var v = ConfigValue("AzureSpeech:Locales", "DOTCLAW_SPEECH_LOCALES");
+            if (string.IsNullOrWhiteSpace(v))
+                return ["de-DE", "en-US"];
+
+            var locales = v.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            return locales.Length > 0 ? locales : ["de-DE", "en-US"];
+        }
+    }
+
+    /// <summary>Azure Speech REST API version for Fast Transcription.</summary>
+    public static string SpeechApiVersion
+    {
+        get
+        {
+            var v = ConfigValue("AzureSpeech:ApiVersion", "DOTCLAW_SPEECH_API_VERSION");
+            return string.IsNullOrWhiteSpace(v) ? "2025-10-15" : v.Trim();
+        }
+    }
+
+    /// <summary>Maximum concurrent Telegram voice downloads/transcriptions. Default 2.</summary>
+    public static int VoiceTranscriptionConcurrency
+    {
+        get
+        {
+            var v = ConfigValue("Telegram:Voice:TranscriptionConcurrency", "DOTCLAW_VOICE_TRANSCRIPTION_CONCURRENCY");
+            if (string.IsNullOrWhiteSpace(v))
+                v = AppConfiguration.Instance["DotClaw:VoiceTranscriptionConcurrency"];
+            if (int.TryParse(v, out var concurrency) && concurrency > 0)
+                return Math.Min(concurrency, 16);
+            return 2;
+        }
+    }
+
+    private static string? ConfigValue(string key, string legacyEnvironmentVariable)
+    {
+        var value = AppConfiguration.Instance[key];
+        return string.IsNullOrWhiteSpace(value) ? Environment.GetEnvironmentVariable(legacyEnvironmentVariable) : value;
+    }
+
     private static bool ParseBool(string? v, bool defaultValue)
     {
         if (string.IsNullOrWhiteSpace(v)) return defaultValue;

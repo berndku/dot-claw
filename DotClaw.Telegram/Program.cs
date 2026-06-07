@@ -30,9 +30,22 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 var sink = new TelegramMessageSink(bot);
 var cron = new CronService();
 var runner = new AgentRunner(sink, cron);
+var speechTranscriber = AzureSpeechTranscriber.FromConfiguration();
 
 var inbound = Channel.CreateUnbounded<InboundItem>(
     new UnboundedChannelOptions { SingleReader = true });
+var voiceProcessor = new TelegramVoiceProcessor(
+    bot,
+    sink,
+    inbound.Writer,
+    speechTranscriber,
+    DotClawConfig.VoiceTranscriptionConcurrency);
+var voiceTasks = new List<Task>();
+
+if (speechTranscriber is null)
+    Console.WriteLine("[voice] disabled (set AzureSpeech:Endpoint and AzureSpeech:Key to enable Telegram voice)");
+else
+    Console.WriteLine($"[voice] enabled via Azure Speech Fast Transcription ({speechTranscriber.LocaleSummary})");
 
 // The most recently active chat — the heartbeat checks in on whoever spoke last.
 Route? lastRoute = null;
@@ -98,14 +111,26 @@ while (!cts.Token.IsCancellationRequested)
                 continue;
             }
 
-            if (update.Message?.Text is not { } userText) continue;
-            if (update.Message.Chat is not { } chat) continue;
-
-            Console.WriteLine($"[{chat.Id}] {chat.FirstName}: {userText}");
+            if (update.Message is not { } message) continue;
+            if (message.Chat is not { } chat) continue;
 
             var route = new Route("telegram", chat.Id.ToString());
-            lastRoute = route;
-            await inbound.Writer.WriteAsync(new InboundItem(route, userText, TurnSource.User), cts.Token);
+
+            if (message.Text is { } userText)
+            {
+                Console.WriteLine($"[{chat.Id}] {chat.FirstName}: {userText}");
+                lastRoute = route;
+                await inbound.Writer.WriteAsync(new InboundItem(route, userText, TurnSource.User), cts.Token);
+                continue;
+            }
+
+            if (message.Voice is { } voice)
+            {
+                Console.WriteLine($"[{chat.Id}] {chat.FirstName}: [voice {voice.Duration}s]");
+                lastRoute = route;
+                voiceTasks.RemoveAll(task => task.IsCompleted);
+                voiceTasks.Add(Task.Run(() => voiceProcessor.ProcessAsync(message, route, cts.Token)));
+            }
         }
     }
     catch (OperationCanceledException) { break; }
@@ -116,6 +141,9 @@ while (!cts.Token.IsCancellationRequested)
     }
 }
 
+try { await Task.WhenAll(voiceTasks); }
+catch (OperationCanceledException) when (cts.Token.IsCancellationRequested) { }
+catch (Exception ex) { Console.WriteLine($"[voice] shutdown wait failed: {ex.Message}"); }
 inbound.Writer.TryComplete();
 try { await consumer; } catch { }
 Console.WriteLine("Goodbye.");
