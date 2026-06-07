@@ -70,6 +70,26 @@ public static class DotClawConfig
         }
     }
 
+    /// <summary>
+    /// Tool names that require human approval before they run. Read from the
+    /// <c>DotClaw:ApprovalTools</c> appsettings array. Returns <c>null</c> when nothing is
+    /// configured, so callers can apply their own defaults.
+    /// </summary>
+    public static IReadOnlyList<string>? ApprovalTools
+    {
+        get
+        {
+            var configuredTools = AppConfiguration.Instance
+                .GetSection("DotClaw:ApprovalTools")
+                .GetChildren()
+                .Select(section => section.Value)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name!.Trim())
+                .ToArray();
+            return configuredTools.Length > 0 ? configuredTools : null;
+        }
+    }
+
     private static string? ConfigValue(string key, string legacyEnvironmentVariable)
     {
         var value = AppConfiguration.Instance[key];

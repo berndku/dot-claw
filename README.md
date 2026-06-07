@@ -255,15 +255,27 @@ Some actions should ask before they happen. DotClaw ships a simulated **`send_me
 tool ("text a contact on your behalf") that appends to `~/.dotclaw/outbox.log` — and gates
 it behind human approval using MAF's `ApprovalRequiredAIFunction`.
 
-**Which tools require approval is configurable at runtime** via `DOTCLAW_APPROVAL_TOOLS`
-(comma-separated, case-insensitive tool names; defaults to `send_message`):
+**Which tools require approval is configurable** via the `DotClaw:ApprovalTools` setting in
+`appsettings.json` / `appsettings.local.json` (case-insensitive tool names; defaults to
+`send_message`):
 
-```powershell
-# Default — only send_message needs approval
-dotnet run -- "text my manager Sarah that I'll be 10 minutes late"
+```json
+// appsettings.local.json
+{
+  "DotClaw": {
+    // Default — only send_message needs approval
+    "ApprovalTools": [ "send_message" ]
+  }
+}
+```
 
-# Gate shell commands too (proves approval is config, not code)
-$env:DOTCLAW_APPROVAL_TOOLS = "send_message,exec"
+```json
+// Gate shell commands too (proves approval is config, not code)
+{
+  "DotClaw": {
+    "ApprovalTools": [ "send_message", "exec" ]
+  }
+}
 ```
 
 - **CLI** asks synchronously with a `y/n` prompt (`AnsiConsole.Confirm`). Approve → the tool

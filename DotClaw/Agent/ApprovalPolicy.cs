@@ -1,10 +1,12 @@
 namespace DotClaw.Agent;
 
+using DotClaw.Runtime;
+
 /// <summary>
 /// Runtime-configurable policy that decides which tools require human approval before they
 /// run. In MAF, approval is a <i>registration-time</i> decision: a tool is gated by wrapping
 /// it in an <c>ApprovalRequiredAIFunction</c>. This policy simply supplies the set of tool
-/// names to gate, sourced from configuration (an env var) rather than being hardcoded or
+/// names to gate, sourced from configuration (appsettings) rather than being hardcoded or
 /// attribute-based. Because both in-process tools and MCP/sandbox tools are <c>AIFunction</c>s
 /// with a <c>.Name</c>, the same policy covers everything uniformly.
 /// </summary>
@@ -25,15 +27,15 @@ public sealed class ApprovalPolicy
     public bool RequiresApproval(string toolName) => _names.Contains(toolName);
 
     /// <summary>
-    /// Reads <c>DOTCLAW_APPROVAL_TOOLS</c> (comma-separated, case-insensitive tool names),
-    /// falling back to <paramref name="defaults"/> when the variable is unset or blank.
+    /// Reads the gated tool names from the <c>DotClaw:ApprovalTools</c> appsettings array,
+    /// falling back to <paramref name="defaults"/> when nothing is configured.
     /// </summary>
-    public static ApprovalPolicy FromEnvironment(IEnumerable<string>? defaults = null)
+    public static ApprovalPolicy FromConfiguration(IEnumerable<string>? defaults = null)
     {
-        var env = Environment.GetEnvironmentVariable("DOTCLAW_APPROVAL_TOOLS");
-        var names = !string.IsNullOrWhiteSpace(env)
-            ? env.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            : (defaults ?? Array.Empty<string>()).ToArray();
+        var configured = DotClawConfig.ApprovalTools;
+        var names = configured is { Count: > 0 }
+            ? configured
+            : (defaults ?? Array.Empty<string>());
         return new ApprovalPolicy(names);
     }
 
