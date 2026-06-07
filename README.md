@@ -94,6 +94,35 @@ var response = await client.GetResponseAsync(messages, chatOptions);  // ← one
 
 - **Part 4** — Heartbeat / cron-based proactive behavior
 
+## Human-in-the-Loop Approval
+
+Some actions should ask before they happen. DotClaw ships a simulated **`send_message`**
+tool ("text a contact on your behalf") that appends to `~/.dotclaw/outbox.log` — and gates
+it behind human approval using MAF's `ApprovalRequiredAIFunction`.
+
+**Which tools require approval is configurable at runtime** via `DOTCLAW_APPROVAL_TOOLS`
+(comma-separated, case-insensitive tool names; defaults to `send_message`):
+
+```powershell
+# Default — only send_message needs approval
+dotnet run -- "text my manager Sarah that I'll be 10 minutes late"
+
+# Gate shell commands too (proves approval is config, not code)
+$env:DOTCLAW_APPROVAL_TOOLS = "send_message,exec"
+```
+
+- **CLI** asks synchronously with a `y/n` prompt (`AnsiConsole.Confirm`). Approve → the tool
+  runs and writes the outbox line; deny → the agent backs off, nothing is written.
+- **Telegram** asks asynchronously: the bot replies with inline **`✅ Approve` / `❌ Deny`**
+  buttons; tapping resolves the pending action and the buttons freeze to "✅ Approved" /
+  "❌ Denied". Approve your agent's actions from your phone.
+
+Under the hood, `ApprovalRequiredAIFunction` is just a marker — the
+`FunctionInvokingChatClient` (already in the pipeline via `.UseFunctionInvocation()`) turns a
+gated call into a `ToolApprovalRequestContent`, then runs or rejects it on the next turn based
+on `request.CreateResponse(approved)`. Pending Telegram approvals are kept in-memory (demo-grade),
+so a bot restart drops them (handled gracefully as "expired").
+
 ## Sandboxed Tools (MXC) — demo
 
 By default DotClaw runs its `read_file`, `write_file`, and `exec` tools inside a

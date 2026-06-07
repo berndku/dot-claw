@@ -216,18 +216,86 @@ Open Telegram on phone. Message your bot. It responds. 🎉
 
 ---
 
+## Part 4.5: Approve Before It Acts on Your Behalf (8 min) — EVERYONE CODES
+
+### The concept (2 min)
+
+So far the agent *acts immediately*. But some actions are risky — sending a message,
+deleting a file, running a shell command. **Human-in-the-loop (HITL) approval** puts a
+person in the loop: the agent **asks first**, and only acts after you say yes.
+
+MAF makes this a one-liner: wrap a tool in **`ApprovalRequiredAIFunction`**. The tool is
+*not* executed — instead the run returns a `ToolApprovalRequestContent`. You inspect it,
+ask the human, and reply with `request.CreateResponse(approved)`. The framework's
+`FunctionInvokingChatClient` then either runs the real tool (approved) or backs off
+(denied). **Which tools require approval is configuration, not code** — DotClaw reads the
+env var `DOTCLAW_APPROVAL_TOOLS` (comma-separated tool names; defaults to `send_message`).
+
+### The demo tool: `send_message` (1 min)
+
+DotClaw ships a self-contained **`send_message`** tool — "text a contact on your behalf."
+The send is *simulated*: it prints a line and appends to `~/.dotclaw/outbox.log`, so the
+side effect is **visible and only happens after approval**.
+
+### CLI demo (3 min)
+
+```powershell
+cd DotClaw
+dotnet run -- "text my manager Sarah that I'll be 10 minutes late to standup"
+```
+
+The agent drafts the message, then **pauses**:
+
+```
+┌─ 🔐 approval required ───────────────────────┐
+│ tool       send_message                      │
+│ recipient  Sarah                             │
+│ message    I'll be 10 minutes late to standup│
+└──────────────────────────────────────────────┘
+Approve send_message? [y/n]:
+```
+
+- **y** → `✅ Message sent to Sarah` + a new line in `~/.dotclaw/outbox.log`.
+- **n** → the agent backs off, **no** outbox line.
+
+**Configurability (the "aha"):** flip the env var and shell commands now need approval too:
+
+```powershell
+$env:DOTCLAW_APPROVAL_TOOLS = "send_message,exec"
+dotnet run -- "run dotnet --version"   # now Exec asks first
+```
+
+### Telegram demo (2 min) — THE WOW MOMENT 📱
+
+With the gateway running, message your bot:
+
+> "Tell my manager Sarah I'll be 10 minutes late"
+
+Instead of just replying, the bot sends the drafted message with two buttons:
+
+`[ ✅ Approve ]  [ ❌ Deny ]`
+
+Tap **Approve** → it sends (buttons become "✅ Approved", outbox line appears).
+Tap **Deny** → it backs off. **You just approved your agent's action from your phone.**
+
+> Same `CreateResponse(bool)` semantics as the CLI — only the input channel differs
+> (button tap vs. console `y/n`).
+
+---
+
 ## Part 5: Wrap-Up (5 min) — PRESENTER TALKS
 
 ### What We Built
 - Agent loop with tool calling (Microsoft Agent Framework)
 - Personality & memory (bootstrap ritual)
 - Telegram gateway (no cloud infra needed)
+- Human-in-the-loop approval (CLI `y/n` + Telegram buttons), configurable per tool
 - Used AI to build AI 🤖
 
 ### What's Next (Teasers)
 - Heartbeat — agent reaches out proactively
 - Sub-agents — spawning child agents
-- Teams / WhatsApp integration
+- Persisted approvals — survive a restart (today's pending approvals are in-memory)
 - Production deployment to Azure
 
 ### Resources (drop in Teams chat)
@@ -246,8 +314,9 @@ Open Telegram on phone. Message your bot. It responds. 🎉
 | 2 | Build the Agent Loop | 20 min | Yes |
 | 3 | Personality & Memory | 15 min | Yes |
 | 4 | Telegram Gateway | 10 min | Yes |
+| 4.5 | Approval (HITL) | 8 min | Yes |
 | 5 | Wrap-Up | 5 min | No — discuss |
-| | **Total** | **60 min** | |
+| | **Total** | **68 min** | |
 
 ---
 
