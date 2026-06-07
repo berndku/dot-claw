@@ -15,8 +15,15 @@ using Microsoft.Extensions.AI;
 /// </summary>
 public static class DotClawAgentFactory
 {
-    public const string Endpoint = "https://openai-bgk.openai.azure.com/";
-    public const string ModelDeployment = "gpt-5.4-mini";
+    public static string Endpoint =>
+        AppConfiguration.Instance["AzureOpenAI:Endpoint"]
+        ?? throw new InvalidOperationException(
+            "AzureOpenAI:Endpoint not configured. Copy appsettings.json to appsettings.local.json and fill in your values.");
+
+    public static string ModelDeployment =>
+        AppConfiguration.Instance["AzureOpenAI:Model"]
+        ?? throw new InvalidOperationException(
+            "AzureOpenAI:Model not configured. Copy appsettings.json to appsettings.local.json and fill in your values.");
 
     /// <summary>
     /// Creates a fully configured AIAgent with tools and system prompt.
@@ -77,7 +84,7 @@ public static class DotClawAgentFactory
 
     private static bool SandboxEnabled()
     {
-        var v = Environment.GetEnvironmentVariable("DOTCLAW_SANDBOX");
+        var v = AppConfiguration.Instance["DotClaw:Sandbox"];
         if (string.IsNullOrWhiteSpace(v))
             return true;
         return v.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");

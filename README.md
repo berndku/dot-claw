@@ -20,21 +20,53 @@ A C#/.NET port of the [OpenClaw](https://github.com/openclaw) personal AI assist
 ## Requirements
 
 - .NET 9.0+
-- GitHub CLI (`gh`) logged in — that's it! Token is auto-resolved.
-  - Microsoft employees get unlimited tokens via their GitHub account.
+- Azure OpenAI resource (with `az login` for authentication)
+
+## Configuration
+
+DotClaw uses the standard .NET configuration stack. Settings are loaded in this order (later wins):
+
+1. **`appsettings.json`** — checked into the repo with documented defaults
+2. **`appsettings.local.json`** — gitignored, holds your actual secrets for local dev
+3. **Environment variables** — override everything (for CI/production, use `__` as section separator)
+
+### Quick start
+
+```bash
+# Copy the template and fill in your values
+cp appsettings.json appsettings.local.json
+```
+
+Edit `appsettings.local.json`:
+```json
+{
+  "AzureOpenAI": {
+    "Endpoint": "https://your-resource.openai.azure.com/",
+    "Model": "gpt-4o-mini"
+  },
+  "Telegram": {
+    "BotToken": "123456:ABC-your-token"
+  },
+  "DotClaw": {
+    "Heartbeat": true,
+    "HeartbeatIntervalSeconds": 30,
+    "Sandbox": true
+  }
+}
+```
+
+Environment variable overrides (e.g. in CI):
+```powershell
+$env:AzureOpenAI__Endpoint = "https://..."
+$env:AzureOpenAI__Model = "gpt-4o"
+$env:Telegram__BotToken = "123456:ABC-..."
+```
 
 ## Setup
 
 ```bash
 cd DotClaw
 dotnet restore
-```
-
-No API keys to configure! If you're logged into `gh`, it just works.
-
-Alternatively, you can set `GITHUB_TOKEN` manually:
-```powershell
-$env:GITHUB_TOKEN = "ghp_your_pat_here"
 ```
 
 ## Run
@@ -76,7 +108,8 @@ Session/
 Runtime/                → Channel-based gateway plumbing + turn execution
   AgentRunner.cs        → Runs a User/Heartbeat/Cron turn and delivers via an IMessageSink
   HeartbeatRunner.cs    → Ambient PeriodicTimer producer (proactive "pulse")
-  DotClawConfig.cs      → Env-var config (heartbeat on/off + interval)
+  AppConfiguration.cs   → Shared IConfiguration (appsettings.json → local → env vars)
+  DotClawConfig.cs      → Typed config accessors (heartbeat on/off + interval)
   Route / InboundItem / TurnSource / IMessageSink
 Cron/                   → Scheduled, self-delivering reminders
   CronService.cs        → Self-re-arming timer (port of OpenClaw's armTimer) + persistence
@@ -123,9 +156,14 @@ When enabled, a `PeriodicTimer` ticks every interval and runs a turn against the
 `HEARTBEAT.md`. If there's nothing worth saying, Link replies exactly `HEARTBEAT_OK` and **stays
 silent**; only a genuine, state-aware reason produces a message. Off by default.
 
-```powershell
-$env:DOTCLAW_HEARTBEAT = "on"            # enable the heartbeat (default: off)
-$env:DOTCLAW_HEARTBEAT_INTERVAL = "30"   # tick interval in seconds (default: 45)
+Configure in `appsettings.local.json`:
+```json
+{
+  "DotClaw": {
+    "Heartbeat": true,
+    "HeartbeatIntervalSeconds": 30
+  }
+}
 ```
 
 `HEARTBEAT.md` is seeded into the workspace but **excluded** from the normal per-turn context, so it
@@ -159,14 +197,18 @@ a **fresh, ephemeral** MXC sandbox that exits when the command finishes.
 
 ### Switch it on/off
 
-`DOTCLAW_SANDBOX` controls which tools the agent uses (default **on**):
+`DotClaw:Sandbox` controls which tools the agent uses (default **on**):
 
+```json
+// appsettings.local.json
+{
+  "DotClaw": { "Sandbox": false }
+}
+```
+
+Or via environment variable:
 ```powershell
-# Sandboxed tools via MXC (default)
-$env:DOTCLAW_SANDBOX = "on"      # or just leave it unset
-
-# In-process C# tools (Tools/AgentTools.cs) — current host behavior
-$env:DOTCLAW_SANDBOX = "off"
+$env:DotClaw__Sandbox = "off"
 ```
 
 ### Build the sandbox server (needed when sandbox is on)
