@@ -173,6 +173,65 @@ only drives the heartbeat — not every reply.
 > shared mutable surface — the workspace `*.md` files — is guarded by a process-wide reader/writer lock
 > plus atomic writes.
 
+### Telegram voice messages — Azure Speech transcription
+
+The Telegram gateway accepts voice notes (`Message.Voice`) in addition to text. Telegram voice notes are
+downloaded through the Bot API and sent directly to Azure Speech Fast Transcription, then the resulting
+transcript is enqueued as a normal user turn for the agent. DotClaw keeps `AgentRunner` text-based; voice
+handling stays at the Telegram edge.
+
+Voice support is optional. Without Speech configuration, text still works and voice messages receive a
+setup hint. To enable voice:
+
+```powershell
+@'
+{
+  "Telegram": {
+    "BotToken": "<bot-token>",
+    "Voice": {
+      "TranscriptionConcurrency": 2
+    }
+  },
+  "AzureSpeech": {
+    "Endpoint": "https://<resource-name>.cognitiveservices.azure.com",
+    "Key": "<speech-resource-key>",
+    "ApiVersion": "2025-10-15",
+    "Locales": [ "de-DE", "en-US" ]
+  }
+}
+'@ | Set-Content appsettings.local.json
+```
+
+`appsettings.local.json` is gitignored and should hold real secrets. Environment variables override
+settings, for example `AzureSpeech__Endpoint`, `AzureSpeech__Key`, and
+`Telegram__Voice__TranscriptionConcurrency`. The older `AZURE_SPEECH_ENDPOINT`,
+`AZURE_SPEECH_KEY`, `DOTCLAW_SPEECH_LOCALES`, `DOTCLAW_SPEECH_API_VERSION`, and
+`DOTCLAW_VOICE_TRANSCRIPTION_CONCURRENCY` variables are still accepted as compatibility fallbacks.
+
+Optional tuning in `appsettings.local.json`:
+
+```json
+{
+  "AzureSpeech": {
+    "ApiVersion": "2025-10-15",
+    "Locales": [ "de-DE", "en-US" ]
+  },
+  "Telegram": {
+    "Voice": {
+      "TranscriptionConcurrency": 2
+    }
+  }
+}
+```
+
+Notes:
+
+- Telegram Bot API downloads are limited to 20 MB; oversized voice messages are rejected gracefully.
+- Fast Transcription accepts Telegram's OGG/Opus voice-note format directly, so the MVP does not require
+  `ffmpeg` or GStreamer.
+- Speech-to-text is billed by audio duration. For short Telegram clips the usage is typically tiny; check
+  the Azure Speech pricing page for your region and SKU.
+
 ## Coming Later
 
 - **Managed scheduling:** Azure AI Foundry **Routines** (Timer/Recurring triggers) as the hosted cron.
