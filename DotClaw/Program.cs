@@ -9,7 +9,7 @@ const int MaxHistoryTokens = 16000;
 
 // ── Build the MAF Agent (via shared factory) ───────────────────
 var (agent, memory) = await DotClawAgentFactory.CreateAsync(
-    approvalPolicy: ApprovalPolicy.FromEnvironment(defaults: [MessagingTools.ToolName]));
+    approvalPolicy: ApprovalPolicy.FromConfiguration(defaults: [MessagingTools.ToolName]));
 
 // ── Session ────────────────────────────────────────────────────
 var sessionStore = new SessionManager("cli:default");

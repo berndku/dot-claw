@@ -119,12 +119,12 @@ public sealed class AgentRunner
     }
 
     /// <summary>
-    /// Approval policy for interactive user turns, sourced from <c>DOTCLAW_APPROVAL_TOOLS</c>
-    /// (defaulting to <c>send_message</c>). Heartbeat and cron turns deliberately use no policy:
-    /// there is no human present to tap a button, so their tool calls run ungated.
+    /// Approval policy for interactive user turns, sourced from the <c>DotClaw:ApprovalTools</c>
+    /// appsettings array (defaulting to <c>send_message</c>). Heartbeat and cron turns deliberately
+    /// use no policy: there is no human present to tap a button, so their tool calls run ungated.
     /// </summary>
     private static ApprovalPolicy BuildApprovalPolicy() =>
-        ApprovalPolicy.FromEnvironment(defaults: [MessagingTools.ToolName]);
+        ApprovalPolicy.FromConfiguration(defaults: [MessagingTools.ToolName]);
 
     private async Task RunHeartbeatAsync(Route route, CancellationToken ct)
     {
