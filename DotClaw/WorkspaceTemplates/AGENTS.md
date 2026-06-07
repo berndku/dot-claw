@@ -15,4 +15,5 @@ Update MEMORY.md when you learn something worth keeping across sessions. If the 
 - `IDENTITY.md` — your name, creature type, vibe, emoji
 - `USER.md` — information about the person you're helping
 - `MEMORY.md` — persistent notes across sessions
+- `HEARTBEAT.md` — the rule for your proactive background "pulse" (used only by the heartbeat, not normal replies)
 - `AGENTS.md` — this file; your capabilities and workspace layout

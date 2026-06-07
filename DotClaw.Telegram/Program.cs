@@ -1,10 +1,8 @@
-﻿using DotClaw.Agent;
-using DotClaw.Session;
-using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
+﻿using System.Threading.Channels;
+using DotClaw.Cron;
+using DotClaw.Runtime;
+using DotClaw.Telegram;
 using Telegram.Bot;
-using Telegram.Bot.Types;
-using Telegram.Bot.Types.Enums;
 
 // ── Resolve Telegram Bot Token ─────────────────────────────────
 var botToken = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN")
@@ -22,7 +20,60 @@ Console.WriteLine("Listening for messages... (Ctrl+C to stop)\n");
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-// ── Long-polling loop ──────────────────────────────────────────
+// ── Runtime wiring ─────────────────────────────────────────────
+// One inbound queue drained by a single consumer → user + heartbeat turns are serialized
+// (they share the user's session). Cron jobs run concurrently in isolated sessions and
+// self-deliver, mirroring real OpenClaw.
+var sink = new TelegramMessageSink(bot);
+var cron = new CronService();
+var runner = new AgentRunner(sink, cron);
+
+var inbound = Channel.CreateUnbounded<InboundItem>(
+    new UnboundedChannelOptions { SingleReader = true });
+
+// The most recently active chat — the heartbeat checks in on whoever spoke last.
+Route? lastRoute = null;
+
+cron.Start((job, ct) => runner.RunCronAsync(job, ct), cts.Token);
+
+if (DotClawConfig.HeartbeatEnabled)
+{
+    var heartbeat = new HeartbeatRunner(
+        inbound.Writer, () => lastRoute, DotClawConfig.HeartbeatInterval);
+    heartbeat.Start(cts.Token);
+}
+else
+{
+    Console.WriteLine("[heartbeat] disabled (set DOTCLAW_HEARTBEAT=on to enable)");
+}
+
+// ── Single consumer: serializes user + heartbeat turns ─────────
+var consumer = Task.Run(async () =>
+{
+    try
+    {
+        await foreach (var item in inbound.Reader.ReadAllAsync(cts.Token))
+        {
+            try
+            {
+                await runner.RunInboundAsync(item, cts.Token);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ Error handling {item.Source} turn for {item.Route.ChatId}: {ex.Message}");
+                if (item.Source == TurnSource.User)
+                {
+                    try { await sink.SendAsync(item.Route, "Sorry, something went wrong. Try again!", cts.Token); }
+                    catch { }
+                }
+            }
+        }
+    }
+    catch (OperationCanceledException) { }
+});
+
+// ── Long-polling loop: produces user items ─────────────────────
 var offset = 0;
 while (!cts.Token.IsCancellationRequested)
 {
@@ -39,7 +90,9 @@ while (!cts.Token.IsCancellationRequested)
 
             Console.WriteLine($"[{chat.Id}] {chat.FirstName}: {userText}");
 
-            _ = Task.Run(() => HandleMessage(bot, chat, userText, cts.Token));
+            var route = new Route("telegram", chat.Id.ToString());
+            lastRoute = route;
+            await inbound.Writer.WriteAsync(new InboundItem(route, userText, TurnSource.User), cts.Token);
         }
     }
     catch (OperationCanceledException) { break; }
@@ -50,68 +103,6 @@ while (!cts.Token.IsCancellationRequested)
     }
 }
 
+inbound.Writer.TryComplete();
+try { await consumer; } catch { }
 Console.WriteLine("Goodbye.");
-
-// ── Message handler ────────────────────────────────────────────
-static async Task HandleMessage(TelegramBotClient bot, Chat chat, string userText, CancellationToken ct)
-{
-    try
-    {
-        // Typing indicator
-        await bot.SendChatAction(chat.Id, ChatAction.Typing, cancellationToken: ct);
-
-        // Create agent (shared factory from DotClaw core)
-        var (agent, _) = await DotClawAgentFactory.CreateAsync("telegram", chat.Id.ToString());
-        var agentSession = await agent.CreateSessionAsync();
-
-        // Load conversation history
-        var sessionKey = $"telegram-{chat.Id}";
-        var sessionStore = new SessionManager(sessionKey);
-        var history = new List<ChatMessage>();
-
-        foreach (var entry in sessionStore.Load())
-        {
-            if (!entry.TryGetProperty("role", out var roleProp)) continue;
-            var role = roleProp.GetString();
-            var content = entry.TryGetProperty("content", out var contentProp)
-                ? contentProp.GetString() ?? "" : "";
-            if (role is "user") history.Add(new ChatMessage(ChatRole.User, content));
-            else if (role is "assistant") history.Add(new ChatMessage(ChatRole.Assistant, content));
-        }
-
-        history.Add(new ChatMessage(ChatRole.User, userText));
-
-        // Run agent (MAF handles tool loop)
-        var response = await agent.RunAsync(history, agentSession);
-        var responseText = response.Text ?? "(no response)";
-
-        // Persist
-        sessionStore.Append([
-            new { role = "user", content = userText },
-            new { role = "assistant", content = responseText }
-        ]);
-
-        // Send response (split if > 4096 chars — Telegram limit)
-        foreach (var chunk in ChunkText(responseText, 4096))
-        {
-            await bot.SendMessage(chat.Id, chunk, parseMode: ParseMode.None, cancellationToken: ct);
-        }
-
-        Console.WriteLine($"[{chat.Id}] 🦞: {Truncate(responseText, 80)}");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"⚠️ Error handling message from {chat.Id}: {ex.Message}");
-        try { await bot.SendMessage(chat.Id, "Sorry, something went wrong. Try again!", cancellationToken: ct); }
-        catch { }
-    }
-}
-
-static IEnumerable<string> ChunkText(string text, int maxLength)
-{
-    for (var i = 0; i < text.Length; i += maxLength)
-        yield return text.Substring(i, Math.Min(maxLength, text.Length - i));
-}
-
-static string Truncate(string s, int max) =>
-    s.Length > max ? s[..max] + "..." : s;
