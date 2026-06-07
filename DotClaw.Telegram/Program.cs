@@ -7,12 +7,13 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 
 // ── Resolve Telegram Bot Token ─────────────────────────────────
-var botToken = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN")
-    ?? throw new InvalidOperationException(
-        "TELEGRAM_BOT_TOKEN not set.\n" +
+var botToken = AppConfiguration.Instance["Telegram:BotToken"];
+if (string.IsNullOrWhiteSpace(botToken))
+    throw new InvalidOperationException(
+        "Telegram:BotToken not configured.\n" +
         "1. Open Telegram → talk to @BotFather → /newbot\n" +
         "2. Copy the token\n" +
-        "3. Set it:  $env:TELEGRAM_BOT_TOKEN = \"your-token\"");
+        "3. Add it to appsettings.local.json under Telegram:BotToken");
 
 var bot = new TelegramBotClient(botToken);
 var me = await bot.GetMe();
