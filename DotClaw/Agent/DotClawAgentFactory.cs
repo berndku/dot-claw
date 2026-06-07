@@ -2,6 +2,8 @@ namespace DotClaw.Agent;
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using DotClaw.Cron;
+using DotClaw.Runtime;
 using DotClaw.Tools;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -21,7 +23,9 @@ public static class DotClawAgentFactory
     /// Authenticates with DefaultAzureCredential (az login, managed identity, etc.).
     /// </summary>
     public static async Task<(AIAgent Agent, WorkspaceMemoryProvider Memory)> CreateAsync(
-        string? channel = null, string? chatId = null, ApprovalPolicy? approvalPolicy = null)
+        string? channel = null, string? chatId = null,
+        CronService? cron = null, TurnSource source = TurnSource.User,
+        ApprovalPolicy? approvalPolicy = null)
     {
         var client = new AzureOpenAIClient(new Uri(Endpoint), new DefaultAzureCredential());
 
@@ -35,9 +39,18 @@ public static class DotClawAgentFactory
             ? await SandboxTools.GetToolsAsync()
             : AgentTools.CreateAll().Cast<AITool>().ToList();
 
-        // Copy into a fresh list (the sandbox list is a cached singleton) and always offer
-        // the send_message demo tool alongside the sandbox/in-process tools.
+        // Copy: SandboxTools returns a shared cached list — never mutate it in place.
+        // Always offer the send_message demo tool alongside the sandbox/in-process tools.
         var tools = new List<AITool>(baseTools) { MessagingTools.Create() };
+
+        // Route-bound cron tools, only for real user turns. Cron- and heartbeat-triggered turns
+        // must NOT be able to schedule more reminders (anti-recursion).
+        if (source == TurnSource.User && cron is not null
+            && channel is not null && chatId is not null)
+        {
+            var route = new Route(channel, chatId);
+            tools.AddRange(new CronTools(cron, route).AsTools());
+        }
 
         // Gate the tools named by the policy by wrapping them in ApprovalRequiredAIFunction.
         tools = ApplyApprovalPolicy(tools, policy);

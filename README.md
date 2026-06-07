@@ -73,7 +73,16 @@ Tools/
                           (DotClaw.SandboxMcp); used when DOTCLAW_SANDBOX=on (default)
 Session/
   SessionManager.cs     → JSONL conversation persistence
-WorkspaceTemplates/     → First-run template files (SOUL, BOOTSTRAP, IDENTITY, etc.)
+Runtime/                → Channel-based gateway plumbing + turn execution
+  AgentRunner.cs        → Runs a User/Heartbeat/Cron turn and delivers via an IMessageSink
+  HeartbeatRunner.cs    → Ambient PeriodicTimer producer (proactive "pulse")
+  DotClawConfig.cs      → Env-var config (heartbeat on/off + interval)
+  Route / InboundItem / TurnSource / IMessageSink
+Cron/                   → Scheduled, self-delivering reminders
+  CronService.cs        → Self-re-arming timer (port of OpenClaw's armTimer) + persistence
+  CronTools.cs          → cron_add / cron_list / cron_remove (route-bound, User turns only)
+  CronSchedule.cs / CronJob.cs → in:1m / every:30m grammar + persisted job (~/.dotclaw/cron.json)
+WorkspaceTemplates/     → First-run template files (SOUL, BOOTSTRAP, IDENTITY, HEARTBEAT, etc.)
 
 DotClaw.SandboxMcp/     → Node/TS MCP server wrapping @microsoft/mxc-sdk (sandboxed tools)
 ```
@@ -90,9 +99,47 @@ IChatClient client = new ChatClientBuilder(openAiChatClient.AsIChatClient())
 var response = await client.GetResponseAsync(messages, chatOptions);  // ← one call does it all
 ```
 
+## Proactive Butlering — Cron + Heartbeat
+
+DotClaw re-implements two of OpenClaw's "the agent acts on its own" concepts. Both are separate
+producers into the gateway's single inbound channel; cron additionally runs **concurrently** in
+isolated sessions and delivers itself.
+
+### Cron — scheduled, self-delivering reminders
+
+Ask Link (e.g. on Telegram): *"Remind me in 1 minute to stretch."* The LLM calls the **`cron_add`**
+tool, which persists a job (with the chat's route baked in) to `~/.dotclaw/cron.json`. When it's due,
+`CronService` runs the agent in an **isolated `cron-{id}` session** and delivers the reminder itself —
+mirroring OpenClaw's *isolated + announce* cron model. The timer is a single self-re-arming loop (a
+port of OpenClaw's `armTimer`) that sleeps until the next due job, clamped to a ~60s watchdog.
+
+- Grammar: `in:<dur>` (one-shot) / `every:<dur>` (recurring); units `s` / `m` / `h` / `d`.
+- Tools (only offered on **user** turns, never to cron/heartbeat turns — anti-recursion):
+  `cron_add`, `cron_list`, `cron_remove`. Jobs survive restart (startup catch-up re-fires overdue ones).
+
+### Heartbeat — an ambient pulse with restraint (opt-in)
+
+When enabled, a `PeriodicTimer` ticks every interval and runs a turn against the rule in
+`HEARTBEAT.md`. If there's nothing worth saying, Link replies exactly `HEARTBEAT_OK` and **stays
+silent**; only a genuine, state-aware reason produces a message. Off by default.
+
+```powershell
+$env:DOTCLAW_HEARTBEAT = "on"            # enable the heartbeat (default: off)
+$env:DOTCLAW_HEARTBEAT_INTERVAL = "30"   # tick interval in seconds (default: 45)
+```
+
+`HEARTBEAT.md` is seeded into the workspace but **excluded** from the normal per-turn context, so it
+only drives the heartbeat — not every reply.
+
+> Concurrency: cron runs use their own session files, so they never collide with chat history. The one
+> shared mutable surface — the workspace `*.md` files — is guarded by a process-wide reader/writer lock
+> plus atomic writes.
+
 ## Coming Later
 
-- **Part 4** — Heartbeat / cron-based proactive behavior
+- **Managed scheduling:** Azure AI Foundry **Routines** (Timer/Recurring triggers) as the hosted cron.
+- **Durable / eternal orchestrations** (Azure Functions Durable Task for MAF) for an enterprise heartbeat.
+- **Sub-agents** and hardened MXC + Azure deployment.
 
 ## Human-in-the-Loop Approval
 
