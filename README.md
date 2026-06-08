@@ -1,342 +1,18 @@
 # 🦞 DotClaw
 
-A C#/.NET port of the [OpenClaw](https://github.com/openclaw) personal AI assistant, based on the [Rebuilding OpenClaw tutorial](https://github.com/jcdeichmann/rebuilding-openclaw-tutorial).
+A C#/.NET port of the [OpenClaw](https://github.com/openclaw) personal AI assistant. 
 
-## What's Built (Parts 1 & 2)
-
-### Part 1 — The Agent Loop
-- **`Agent/AgentLoop.cs`** — the core tool loop: send message → LLM responds → execute tools → repeat
-- **`Tools/ReadFileTool.cs`** — read files from disk
-- **`Tools/WriteFileTool.cs`** — write files to disk
-- **`Tools/ExecTool.cs`** — run shell commands (with dangerous-pattern blocking)
-- **`Session/SessionManager.cs`** — persist conversation history to `~/.dotclaw/sessions/`
-- **`Program.cs`** — interactive CLI and single-shot mode
-
-### Part 2 — Personality: Soul + Identity
-- **`Agent/WorkspaceMemoryProvider.cs`** — seeds workspace templates on first run, reads workspace files, and injects them as context each turn
-- **`Agent/ContextBuilder.cs`** — builds the system prompt with tagged workspace sections
-- **`WorkspaceTemplates/`** — SOUL.md, USER.md, BOOTSTRAP.md, AGENTS.md, MEMORY.md
 
 ## Requirements
 
 - .NET 10.0+
-- Azure OpenAI resource. Use Microsoft Entra ID authentication (`az login` locally or managed identity
+- **Azure OpenAI** resource. Use Microsoft Entra ID authentication (`az login` locally or managed identity
   in Azure) or configure an optional API key.
-
-## Configuration
-
-DotClaw uses the standard .NET configuration stack. Settings are loaded in this order (later wins):
-
-1. **`appsettings.json`** — checked into the repo with documented defaults
-2. **`appsettings.local.json`** — gitignored, holds your actual secrets for local dev
-3. **Environment variables** — override everything (for CI/production, use `__` as section separator)
-
-### Quick start
-
-```bash
-# Copy the template and fill in your values
-cp appsettings.json appsettings.local.json
-```
-
-Edit `appsettings.local.json`:
-```json
-{
-  "AzureOpenAI": {
-    "Endpoint": "https://your-resource.openai.azure.com/",
-    "Model": "gpt-4o-mini",
-    "Key": ""
-  },
-  "Telegram": {
-    "BotToken": "123456:ABC-your-token"
-  },
-  "DotClaw": {
-    "Heartbeat": true,
-    "HeartbeatIntervalSeconds": 30,
-    "Sandbox": true
-  }
-}
-```
-
-Environment variable overrides (e.g. in CI):
-```powershell
-$env:AzureOpenAI__Endpoint = "https://..."
-$env:AzureOpenAI__Model = "gpt-4o"
-$env:AzureOpenAI__Key = ""   # optional; leave empty for Microsoft Entra ID
-$env:Telegram__BotToken = "123456:ABC-..."
-```
-
-Azure service keys are optional. When `AzureOpenAI:Key` or `AzureSpeech:Key` is empty, DotClaw uses
-`DefaultAzureCredential`, so local development can use `az login` and Azure hosting can use managed
-identity. If you provide a key, DotClaw uses key-based authentication for that service instead.
-
-## Setup
-
-```bash
-cd DotClaw
-dotnet restore
-```
-
-## Run
-
-**Interactive mode:**
-```bash
-dotnet run
-```
-
-**Single-shot mode:**
-```bash
-dotnet run -- "what files are in the current directory"
-dotnet run -- "write hello world to a file then read it back"
-```
-
-## How It Works
-
-1. Your message is sent to GPT-4o via GitHub Models (free for MS employees)
-2. If the LLM wants to call a tool, the agent executes it and feeds the result back
-3. This loops up to 20 iterations until the LLM returns a plain text response
-4. On first run, `BOOTSTRAP.md` triggers a personality setup flow — the agent asks your name, timezone, and preferred personality, then writes `SOUL.md` and `USER.md`
-5. Every subsequent session loads workspace files into the system prompt automatically
-
-## Architecture
-
-```
-Program.cs              → Entry point (CLI + single-shot)
-                          MAF pipeline: OpenAI → FunctionInvocation → Build
-Agent/
-  ContextBuilder.cs     → System prompt assembly from workspace files
-  WorkspaceMemoryProvider.cs → Workspace seeding + file reading + per-turn context injection
-Tools/
-  AgentTools.cs         → All tools as plain C# methods (read_file, write_file, exec)
-                          Registered via AIFunctionFactory.Create() — used when DOTCLAW_SANDBOX=off
-  SandboxTools.cs       → Owns the single long-lived MCP client to the MXC sandbox server
-                          (DotClaw.SandboxMcp); used when DOTCLAW_SANDBOX=on (default)
-Session/
-  SessionManager.cs     → JSONL conversation persistence
-Runtime/                → Channel-based gateway plumbing + turn execution
-  AgentRunner.cs        → Runs a User/Heartbeat/Cron turn and delivers via an IMessageSink
-  HeartbeatRunner.cs    → Ambient PeriodicTimer producer (proactive "pulse")
-  AppConfiguration.cs   → Shared IConfiguration (appsettings.json → local → env vars)
-  DotClawConfig.cs      → Typed config accessors (heartbeat on/off + interval)
-  Route / InboundItem / TurnSource / IMessageSink
-Cron/                   → Scheduled, self-delivering reminders
-  CronService.cs        → Self-re-arming timer (port of OpenClaw's armTimer) + persistence
-  CronTools.cs          → cron_add / cron_list / cron_remove (route-bound, User turns only)
-  CronSchedule.cs / CronJob.cs → in:1m / every:30m grammar + persisted job (~/.dotclaw/cron.json)
-WorkspaceTemplates/     → First-run template files (SOUL, BOOTSTRAP, IDENTITY, HEARTBEAT, etc.)
-
-DotClaw.SandboxMcp/     → Node/TS MCP server wrapping @microsoft/mxc-sdk (sandboxed tools)
-```
-
-### MAF Pipeline
-
-The entire agent is built in 4 lines — no manual tool loop:
-
-```csharp
-IChatClient client = new ChatClientBuilder(openAiChatClient.AsIChatClient())
-    .UseFunctionInvocation()   // ← MAF handles the tool loop automatically
-    .Build();
-
-var response = await client.GetResponseAsync(messages, chatOptions);  // ← one call does it all
-```
-
-## Proactive Butlering — Cron + Heartbeat
-
-DotClaw re-implements two of OpenClaw's "the agent acts on its own" concepts. Both are separate
-producers into the gateway's single inbound channel; cron additionally runs **concurrently** in
-isolated sessions and delivers itself.
-
-### Cron — scheduled, self-delivering reminders
-
-Ask Link (e.g. on Telegram): *"Remind me in 1 minute to stretch."* The LLM calls the **`cron_add`**
-tool, which persists a job (with the chat's route baked in) to `~/.dotclaw/cron.json`. When it's due,
-`CronService` runs the agent in an **isolated `cron-{id}` session** and delivers the reminder itself —
-mirroring OpenClaw's *isolated + announce* cron model. The timer is a single self-re-arming loop (a
-port of OpenClaw's `armTimer`) that sleeps until the next due job, clamped to a ~60s watchdog.
-
-- Grammar: `in:<dur>` (one-shot) / `every:<dur>` (recurring); units `s` / `m` / `h` / `d`.
-- Tools (only offered on **user** turns, never to cron/heartbeat turns — anti-recursion):
-  `cron_add`, `cron_list`, `cron_remove`. Jobs survive restart (startup catch-up re-fires overdue ones).
-
-### Heartbeat — an ambient pulse with restraint (opt-in)
-
-When enabled, a `PeriodicTimer` ticks every interval and runs a turn against the rule in
-`HEARTBEAT.md`. If there's nothing worth saying, Link replies exactly `HEARTBEAT_OK` and **stays
-silent**; only a genuine, state-aware reason produces a message. Off by default.
-
-Configure in `appsettings.local.json`:
-```json
-{
-  "DotClaw": {
-    "Heartbeat": true,
-    "HeartbeatIntervalSeconds": 30
-  }
-}
-```
-
-`HEARTBEAT.md` is seeded into the workspace but **excluded** from the normal per-turn context, so it
-only drives the heartbeat — not every reply.
-
-> Concurrency: cron runs use their own session files, so they never collide with chat history. The one
-> shared mutable surface — the workspace `*.md` files — is guarded by a process-wide reader/writer lock
-> plus atomic writes.
-
-### Telegram voice messages — Azure Speech transcription
-
-The Telegram gateway accepts voice notes (`Message.Voice`) in addition to text. Telegram voice notes are
-downloaded through the Bot API and sent directly to Azure Speech Fast Transcription, then the resulting
-transcript is enqueued as a normal user turn for the agent. DotClaw keeps `AgentRunner` text-based; voice
-handling stays at the Telegram edge.
-
-Voice support is optional. Without Speech configuration, text still works and voice messages receive a
-setup hint. To enable voice:
-
-```powershell
-@'
-{
-  "Telegram": {
-    "BotToken": "<bot-token>",
-    "Voice": {
-      "TranscriptionConcurrency": 2
-    }
-  },
-  "AzureSpeech": {
-    "Endpoint": "https://<resource-name>.cognitiveservices.azure.com",
-    "Key": "",
-    "ApiVersion": "2025-10-15",
-    "Locales": [ "de-DE", "en-US" ]
-  }
-}
-'@ | Set-Content appsettings.local.json
-```
-
-`appsettings.local.json` is gitignored and should hold real secrets if you choose key-based auth.
-Environment variables override settings, for example `AzureSpeech__Endpoint`, `AzureSpeech__Key`,
-and `Telegram__Voice__TranscriptionConcurrency`. The older `AZURE_SPEECH_ENDPOINT`,
-`AZURE_SPEECH_API_KEY`, `AZURE_SPEECH_KEY`, `DOTCLAW_SPEECH_LOCALES`, `DOTCLAW_SPEECH_API_VERSION`,
-and `DOTCLAW_VOICE_TRANSCRIPTION_CONCURRENCY` variables are still accepted as compatibility fallbacks.
-
-For keyless Speech auth, grant the signed-in user or managed identity an Azure AI Services/Speech data
-plane role such as **Cognitive Services Speech User** on the Speech resource. To use key-based auth
-instead, set `AzureSpeech:Key`.
-
-Optional tuning in `appsettings.local.json`:
-
-```json
-{
-  "AzureSpeech": {
-    "ApiVersion": "2025-10-15",
-    "Locales": [ "de-DE", "en-US" ]
-  },
-  "Telegram": {
-    "Voice": {
-      "TranscriptionConcurrency": 2
-    }
-  }
-}
-```
-
-Notes:
-
-- Telegram Bot API downloads are limited to 20 MB; oversized voice messages are rejected gracefully.
-- Fast Transcription accepts Telegram's OGG/Opus voice-note format directly, so the MVP does not require
-  `ffmpeg` or GStreamer.
-- Speech-to-text is billed by audio duration. For short Telegram clips the usage is typically tiny; check
-  the Azure Speech pricing page for your region and SKU.
-
-## Coming Later
-
-- **Managed scheduling:** Azure AI Foundry **Routines** (Timer/Recurring triggers) as the hosted cron.
-- **Durable / eternal orchestrations** (Azure Functions Durable Task for MAF) for an enterprise heartbeat.
-- **Sub-agents** and hardened MXC + Azure deployment.
-
-## Human-in-the-Loop Approval
-
-Some actions should ask before they happen. DotClaw ships a simulated **`send_message`**
-tool ("text a contact on your behalf") that appends to `~/.dotclaw/outbox.log` — and gates
-it behind human approval using MAF's `ApprovalRequiredAIFunction`.
-
-**Which tools require approval is configurable** via the `DotClaw:ApprovalTools` setting in
-`appsettings.json` / `appsettings.local.json` (case-insensitive tool names; defaults to
-`send_message`):
-
-```json
-// appsettings.local.json
-{
-  "DotClaw": {
-    // Default — only send_message needs approval
-    "ApprovalTools": [ "send_message" ]
-  }
-}
-```
-
-```json
-// Gate shell commands too (proves approval is config, not code)
-{
-  "DotClaw": {
-    "ApprovalTools": [ "send_message", "exec" ]
-  }
-}
-```
-
-- **CLI** asks synchronously with a `y/n` prompt (`AnsiConsole.Confirm`). Approve → the tool
-  runs and writes the outbox line; deny → the agent backs off, nothing is written.
-- **Telegram** asks asynchronously: the bot replies with inline **`✅ Approve` / `❌ Deny`**
-  buttons; tapping resolves the pending action and the buttons freeze to "✅ Approved" /
-  "❌ Denied". Approve your agent's actions from your phone.
-
-Under the hood, `ApprovalRequiredAIFunction` is just a marker — the
-`FunctionInvokingChatClient` (already in the pipeline via `.UseFunctionInvocation()`) turns a
-gated call into a `ToolApprovalRequestContent`, then runs or rejects it on the next turn based
-on `request.CreateResponse(approved)`. Pending Telegram approvals are kept in-memory (demo-grade),
-so a bot restart drops them (handled gracefully as "expired").
-
-## Sandboxed Tools (MXC) — demo
-
-By default DotClaw runs its `read_file`, `write_file`, and `exec` tools inside a
-[**MXC**](https://github.com/microsoft/mxc) (Microsoft eXecution Container) process sandbox instead of
-directly on the host. MXC has no .NET SDK — only a TypeScript one — so a tiny **Node/TypeScript MCP
-server** (`DotClaw.SandboxMcp/`) wraps `@microsoft/mxc-sdk` and DotClaw consumes it over stdio MCP
-(the pattern Microsoft Agent Framework supports natively).
-
-```
-DotClaw (C#, MAF)  --stdio MCP-->  DotClaw.SandboxMcp (Node/TS)  --@microsoft/mxc-sdk-->  wxc-exec.exe --> AppContainer
-```
-
-**Lifetime:** the Node MCP server is spawned **once** and reused for the whole run (so the Telegram
-gateway, which builds an agent per message, doesn't leak a process). Each individual tool call runs in
-a **fresh, ephemeral** MXC sandbox that exits when the command finishes.
-
-### Switch it on/off
-
-`DotClaw:Sandbox` controls which tools the agent uses (default **on**):
-
-```json
-// appsettings.local.json
-{
-  "DotClaw": { "Sandbox": false }
-}
-```
-
-Or via environment variable:
-```powershell
-$env:DotClaw__Sandbox = "off"
-```
-
-### Build the sandbox server (needed when sandbox is on)
-
-```powershell
-cd DotClaw.SandboxMcp
-npm install
-npm run build      # → dist/server.js
-```
-
-The `@microsoft/mxc-sdk` npm package bundles the native `wxc-exec.exe`, so no Rust build is required.
-C# locates the server at `DotClaw.SandboxMcp/dist/server.js` by default; override with
-`DOTCLAW_SANDBOX_MCP_DIR`.
-
-### Requirements & caveats (it's a makerspace demo)
-
-- **Node.js ≥ 18** on `PATH`.
+- (Optional) **Azure Speech** resource for Telegram voice message transcription. Keyless auth is supported
+  here too; just grant the appropriate data plane role to your user or managed identity.
+
+### For MXC
+- Node.js ≥ 18 
 - **Windows 11 24H2+ (build 26100+)** for MXC's default `processcontainer` backend.
 - **One-time admin host-prep** so a shell can start inside an AppContainer. Without it you'll see
   `BaseContainer is unavailable; DACL fallback requires write-DAC permission ...`. Run once from an
@@ -350,3 +26,107 @@ C# locates the server at `DotClaw.SandboxMcp/dist/server.js` by default; overrid
 
 - MXC is an **early preview** — Microsoft states its profiles are **not** security boundaries yet.
   Treat this as a demonstration of sandboxed tool execution, not a hardened isolation guarantee.
+
+
+## Configuration
+
+DotClaw uses the standard .NET configuration stack. Settings are loaded in this order (later wins):
+
+1. **`appsettings.json`** — checked into the repo with documented defaults
+2. **`appsettings.local.json`** — gitignored, holds your actual secrets for local dev
+
+### Quick start
+
+```bash
+# Copy the template and fill in your values
+cp appsettings.json appsettings.local.json
+```
+
+Edit `appsettings.local.json`:
+```json
+{
+  "AzureOpenAI": {
+    "Endpoint": "https://your-resource.openai.azure.com/",
+    "Model": "gpt-5.4-mini",
+    "Key": ""
+  },
+  "Telegram": {
+    "BotToken": "123456:ABC-your-token",
+    "Voice": {
+      "TranscriptionConcurrency": 2
+    }
+  },
+  "AzureSpeech": {
+    "Endpoint": "https://your-resource.cognitiveservices.azure.com/",
+    "Key": "",
+    "ApiVersion": "2025-10-15",
+    "Locales": [ "de-DE", "en-US" ]
+  },
+  "DotClaw": {
+    "Heartbeat": false,
+    "HeartbeatIntervalSeconds": 45,
+    "Sandbox": true,
+    "ApprovalTools": [ "send_message" ]
+  }
+}
+```
+
+Azure service keys are optional. When `AzureOpenAI:Key` or `AzureSpeech:Key` is empty, DotClaw uses
+`DefaultAzureCredential`, so local development can use `az login` and Azure hosting can use managed
+identity. If you provide a key, DotClaw uses key-based authentication for that service instead.
+
+## Run
+
+Restore once, then decide whether to use the MXC sandbox before picking a frontend. Both frontends
+share the same agent, configuration, and workspace.
+
+```bash
+dotnet restore
+```
+
+### 1) The MXC sandbox (recommended, default)
+
+By default DotClaw runs its `exec` tool inside a
+[**MXC**](https://github.com/microsoft/mxc) (Microsoft eXecution Container) process sandbox instead of
+directly on the host. MXC has no .NET SDK — only a TypeScript one — so a tiny **Node/TypeScript MCP
+server** (`DotClaw.SandboxMcp/`) wraps `@microsoft/mxc-sdk` and DotClaw consumes it over stdio MCP.
+
+
+**Sandbox on (default).** Build the Node sandbox server once — this works for both the CLI and the
+Telegram gateway:
+
+```powershell
+cd DotClaw.SandboxMcp
+npm install
+npm run build      # → dist/server.js
+```
+
+The `@microsoft/mxc-sdk` npm package bundles the native `wxc-exec.exe`, so no Rust build is required.
+C# locates the server at `DotClaw.SandboxMcp/dist/server.js` by default; override with
+`DOTCLAW_SANDBOX_MCP_DIR`. See [the MXC requirements](#for-mxc) above for the one-time host prep.
+
+**Sandbox off.** Skip the Node build and run tools directly on the host by setting `DotClaw:Sandbox`
+to `false` in `appsettings.local.json`.
+
+
+### 2) Pick a frontend
+
+#### a) CLI (interactive console)
+
+```bash
+cd DotClaw
+dotnet run
+```
+
+Chat with the agent directly in your terminal.
+
+#### b) Telegram gateway
+
+```bash
+cd DotClaw.Telegram
+dotnet run
+```
+
+Connects to your bot using `Telegram:BotToken` and serves chat (and voice notes, if Azure Speech is
+configured). Run this instead of the CLI when you want to talk to DotClaw from your phone.
+
