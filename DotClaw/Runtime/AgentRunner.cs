@@ -1,5 +1,6 @@
 namespace DotClaw.Runtime;
 
+using System.Text.RegularExpressions;
 using DotClaw.Agent;
 using DotClaw.Cron;
 using DotClaw.Session;
@@ -21,6 +22,9 @@ public sealed class AgentRunner
 {
     private const string HeartbeatOk = "HEARTBEAT_OK";
     private const int MaxHistoryTokens = 100_000;
+    private static readonly Regex HtmlCommentRegex = new(
+        "<!--.*?-->",
+        RegexOptions.Singleline | RegexOptions.CultureInvariant);
 
     private readonly IMessageSink _sink;
     private readonly CronService _cron;
@@ -134,7 +138,14 @@ public sealed class AgentRunner
 
         var store = new SessionManager(SessionKey(route));
         var history = LoadHistory(store);
-        history.Add(new ChatMessage(ChatRole.System, BuildHeartbeatPrompt(memory)));
+        var prompt = BuildHeartbeatPrompt(memory);
+        if (prompt is null)
+        {
+            Console.WriteLine($"[heartbeat] {route.ChatId}: no heartbeat tasks configured (silent)");
+            return;
+        }
+
+        history.Add(new ChatMessage(ChatRole.System, prompt));
 
         var response = await agent.RunAsync(history, session);
         var text = (response.Text ?? "").Trim();
@@ -199,18 +210,34 @@ public sealed class AgentRunner
         return HistoryTrimmer.Trim(history, MaxHistoryTokens);
     }
 
-    private static string BuildHeartbeatPrompt(WorkspaceMemoryProvider memory)
+    private static string? BuildHeartbeatPrompt(WorkspaceMemoryProvider memory)
     {
         var custom = memory.TryReadRaw("HEARTBEAT.md");
-        var body = string.IsNullOrWhiteSpace(custom)
-            ? "Look at the current time and the user's context. If there is something genuinely worth " +
-              "proactively saying right now, say it in one short line. Otherwise stay silent."
-            : custom!.Trim();
+        if (!HasHeartbeatInstructions(custom))
+            return null;
+
+        var body = custom!.Trim();
 
         return
             "[HEARTBEAT] This is an automatic background check, not a message from the user.\n" +
             body + "\n\n" +
             $"If there is nothing worth sending right now, reply with exactly: {HeartbeatOk}";
+    }
+
+    private static bool HasHeartbeatInstructions(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return false;
+
+        var withoutHtmlComments = HtmlCommentRegex.Replace(content, "");
+        foreach (var line in withoutHtmlComments.Replace("\r\n", "\n").Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length > 0 && !trimmed.StartsWith("#", StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
     }
 
     private static string Truncate(string s, int max) => s.Length > max ? s[..max] + "..." : s;
