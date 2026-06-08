@@ -1,6 +1,8 @@
 # 🦞 DotClaw
 
-A C#/.NET port of the [OpenClaw](https://github.com/openclaw) personal AI assistant. 
+A personal playground for experimenting with the Microsoft Agent Framework in C#/.NET — a hobby
+reimagining of [OpenClaw](https://github.com/openclaw)'s personal AI assistant. Built for learning and
+tinkering, not production.
 
 
 ## Requirements
