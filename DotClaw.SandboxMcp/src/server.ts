@@ -39,6 +39,12 @@ const SYSTEM32 = path.join(SYSTEM_ROOT, "System32");
 // This is where SOUL.md, MEMORY.md, USER.md, etc. are seeded and edited.
 const WORKSPACE_DIR = resolveWorkspaceDir();
 
+// The per-user DotClaw home (~/.dotclaw). Besides the workspace sub-folder it
+// also holds the seeded template files plus the rest of DotClaw's per-user
+// state (cron.json, sessions/, outbox.log). Resolved dynamically from the
+// user's home directory so it is never hard-coded to a specific account.
+const DOTCLAW_DIR = resolveDotClawDir();
+
 interface SandboxResult {
   stdout: string;
   stderr: string;
@@ -48,8 +54,11 @@ interface SandboxResult {
 /**
  * Build the baseline MXC policy:
  *
- *  - readwrite: the user's persistent DotClaw workspace, so file changes survive
- *    restarts and match the files loaded into the system prompt.
+ *  - readwrite: the per-user DotClaw home (~/.dotclaw) — which contains the
+ *    persistent workspace, the seeded template files and DotClaw's other
+ *    per-user state — so file changes survive restarts and match the files
+ *    loaded into the system prompt. The workspace sub-folder is listed
+ *    explicitly too in case it is relocated via DOTCLAW_WORKSPACE_DIR.
  *  - readonly: only %SystemRoot%\System32. It is already granted to ALL
  *    APPLICATION PACKAGES on every Windows install, so MXC never has to rewrite
  *    an ACL (no WRITE_DAC, no admin). This is enough to resolve cmd.exe and the
@@ -66,7 +75,7 @@ function basePolicy() {
     version: SCHEMA_VERSION,
     filesystem: {
       readonlyPaths: [SYSTEM32],
-      readwritePaths: [WORKSPACE_DIR],
+      readwritePaths: [DOTCLAW_DIR, WORKSPACE_DIR],
     },
     network: { allowOutbound: false },
     timeoutMs: TIMEOUT_MS,
@@ -81,6 +90,17 @@ function resolveWorkspaceDir(): string {
 
   const home = process.env.USERPROFILE ?? process.env.HOME ?? os.homedir();
   return path.join(home, ".dotclaw", "workspace");
+}
+
+/**
+ * Resolve the per-user DotClaw home (~/.dotclaw) from the current user's home
+ * directory. Mirrors the C# side (Environment.SpecialFolder.UserProfile +
+ * ".dotclaw"), so the grant follows whichever account is running DotClaw
+ * instead of being pinned to one path.
+ */
+function resolveDotClawDir(): string {
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? os.homedir();
+  return path.join(home, ".dotclaw");
 }
 
 /**
