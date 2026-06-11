@@ -90,6 +90,10 @@ internal sealed class TelegramVoiceProcessor
         var contentType = NormalizeContentType(voice.MimeType);
         var transcript = await _transcriber.TranscribeAsync(audio, FileNameFor(contentType), contentType, ct);
 
+        var durationLabel = voice.Duration > 0 ? $", duration {voice.Duration}s" : "";
+        var transcriptText = string.IsNullOrWhiteSpace(transcript.Text) ? "<no speech detected>" : transcript.Text;
+        Console.WriteLine($"[voice] transcript for {route.ChatId}{durationLabel}: {transcriptText}");
+
         if (string.IsNullOrWhiteSpace(transcript.Text))
         {
             await _sink.SendAsync(route, "I couldn't hear any speech in that voice message. Please try again or send text.", ct);
