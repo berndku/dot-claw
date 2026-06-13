@@ -169,6 +169,15 @@ public static class AgentTools
         path = Environment.ExpandEnvironmentVariables(path);
         if (path.StartsWith('~'))
             path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..]);
+
+        // Relative paths resolve against the agent's workspace — the working directory advertised
+        // in the system prompt (ContextBuilder.BuildBaseInstructions) — not the host process's cwd.
+        // Without this, a bare "SOUL.md" would resolve next to the running .exe instead of the
+        // seeded ~/.dotclaw/workspace, and the sandbox tool modes (which combine with WorkspaceDir)
+        // would behave differently from cmd mode.
+        if (!Path.IsPathRooted(path))
+            path = Path.Combine(Agent.WorkspaceMemoryProvider.WorkspaceDir, path);
+
         return path;
     }
 
