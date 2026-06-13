@@ -47,12 +47,20 @@ public static class ContextBuilder
 
         var workspaceFiles = memory.ReadAll();
 
+        // OpenClaw parity: workspace files (including BOOTSTRAP.md on a fresh workspace) are injected
+        // plainly into Project Context with no special "bootstrap" steering. BOOTSTRAP.md already tells
+        // the agent how to open the first conversation; layering extra "greet exactly once / don't quote
+        // the example" directives on top contradicts the file and makes the model emit the greeting
+        // twice. Let the file speak for itself — OpenClaw does exactly this and gets a single greeting.
         if (workspaceFiles.Count > 0)
         {
             sb.AppendLine();
             sb.AppendLine("# Project Context");
             sb.AppendLine();
-            sb.AppendLine("The following workspace files have been loaded:");
+            sb.AppendLine("The following workspace files define your identity, behavior, and context.");
+
+            if (workspaceFiles.ContainsKey("agents"))
+                sb.AppendLine("If AGENTS.md is present, follow its operational guidance (including startup routines and red-line constraints) unless higher-priority instructions override it.");
 
             if (workspaceFiles.ContainsKey("soul"))
                 sb.AppendLine("If SOUL.md is present, embody its persona and tone. Avoid stiff, generic replies; follow its guidance unless higher-priority instructions override it.");

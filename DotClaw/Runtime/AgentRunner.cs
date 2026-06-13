@@ -96,7 +96,7 @@ public sealed class AgentRunner
 
         if (request is null)
         {
-            var text = response.Text ?? "(no response)";
+            var text = FinalAssistantText(response) ?? "(no response)";
             new SessionManager(sessionKey).Append([
                 new { role = "user", content = userText },
                 new { role = "assistant", content = text },
@@ -148,7 +148,7 @@ public sealed class AgentRunner
         history.Add(new ChatMessage(ChatRole.System, prompt));
 
         var response = await agent.RunAsync(history, session);
-        var text = (response.Text ?? "").Trim();
+        var text = (FinalAssistantText(response) ?? "").Trim();
 
         // Restraint: an empty or HEARTBEAT_OK reply means "nothing to say" — stay silent.
         if (text.Length == 0 || text.StartsWith(HeartbeatOk, StringComparison.OrdinalIgnoreCase))
@@ -180,7 +180,7 @@ public sealed class AgentRunner
         var history = new List<ChatMessage> { new(ChatRole.System, prompt) };
 
         var response = await agent.RunAsync(history, session);
-        var text = response.Text ?? job.Prompt;
+        var text = FinalAssistantText(response) ?? job.Prompt;
 
         // Final check: if the job was removed while this run was in flight, don't deliver.
         if (_cron.IsCancelled(job.Id))
@@ -195,6 +195,15 @@ public sealed class AgentRunner
     }
 
     private static string SessionKey(Route route) => $"{route.Channel}-{route.ChatId}";
+
+    // Returns only the final assistant message's text, or null if none carries text. AgentResponse.Text
+    // concatenates the text of every message in a turn — including intermediate narration emitted
+    // alongside tool calls — so tool-using turns would otherwise deliver the reply twice.
+    private static string? FinalAssistantText(AgentResponse response) =>
+        response.Messages
+            .Where(m => m.Role == ChatRole.Assistant)
+            .Select(m => m.Text)
+            .LastOrDefault(t => !string.IsNullOrWhiteSpace(t));
 
     private static List<ChatMessage> LoadHistory(SessionManager store)
     {

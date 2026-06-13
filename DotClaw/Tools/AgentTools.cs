@@ -39,8 +39,11 @@ public static class AgentTools
             string content;
             if (Agent.WorkspaceMemoryProvider.IsWorkspacePath(path))
             {
+                // ReaderWriterLockSlim is thread-affine: the lock must be released on the same
+                // thread that took it. Do the read synchronously so no await continuation can
+                // resume on a different thread and trip "lock released without being held".
                 Agent.WorkspaceMemoryProvider.WorkspaceLock.EnterReadLock();
-                try { content = await File.ReadAllTextAsync(path); }
+                try { content = File.ReadAllText(path); }
                 finally { Agent.WorkspaceMemoryProvider.WorkspaceLock.ExitReadLock(); }
             }
             else
@@ -77,8 +80,10 @@ public static class AgentTools
             // (a user turn and a cron turn can run at the same time — see WorkspaceMemoryProvider).
             if (Agent.WorkspaceMemoryProvider.IsWorkspacePath(path))
             {
+                // ReaderWriterLockSlim is thread-affine: enter and exit must run on the same
+                // thread, so the write must be synchronous (no await between Enter and Exit).
                 Agent.WorkspaceMemoryProvider.WorkspaceLock.EnterWriteLock();
-                try { await AtomicWriteAsync(path, content); }
+                try { AtomicWrite(path, content); }
                 finally { Agent.WorkspaceMemoryProvider.WorkspaceLock.ExitWriteLock(); }
             }
             else
@@ -125,6 +130,10 @@ public static class AgentTools
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                // Run in the agent's workspace so relative commands (e.g. `del BOOTSTRAP.md`) target
+                // the seeded ~/.dotclaw/workspace — matching the working directory advertised in the
+                // system prompt and ReadFile/WriteFile's path resolution — instead of the host cwd.
+                WorkingDirectory = Agent.WorkspaceMemoryProvider.WorkspaceDir,
             };
 
             using var process = Process.Start(psi)!;
@@ -157,10 +166,10 @@ public static class AgentTools
         AIFunctionFactory.Create(Exec, ExecToolName),
     ];
 
-    private static async Task AtomicWriteAsync(string path, string content)
+    private static void AtomicWrite(string path, string content)
     {
         var tmp = path + ".tmp";
-        await File.WriteAllTextAsync(tmp, content);
+        File.WriteAllText(tmp, content);
         File.Move(tmp, path, overwrite: true);
     }
 

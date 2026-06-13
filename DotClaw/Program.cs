@@ -13,7 +13,14 @@ var (agent, memory) = await DotClawAgentFactory.CreateAsync(
 
 // ── Session ────────────────────────────────────────────────────
 var sessionStore = new SessionManager("cli:default");
-AgentSession agentSession = await agent.CreateSessionAsync();
+
+// History lives in ONE place: our own savedHistory (persisted to JSONL, replayed below) which we
+// pass in full on every turn. The agent session must therefore be created FRESH per turn — a
+// ChatClientAgent's session carries an in-memory ChatHistoryProvider that accumulates each run's
+// input+response and then MERGES that with whatever messages we pass next time. Reusing one session
+// across turns while also replaying the full history double-feeds every prior message, so the model
+// sees its last reply twice and parrots it verbatim. Mirrors AgentRunner (Telegram), which already
+// creates a session per turn.
 
 // Replay saved history as input messages for the first call
 var savedHistory = new List<ChatMessage>();
@@ -33,11 +40,13 @@ if (args.Length > 0)
     var userMessage = string.Join(" ", args);
     savedHistory.Add(new ChatMessage(ChatRole.User, userMessage));
     var trimmed = HistoryTrimmer.Trim(savedHistory, MaxHistoryTokens);
+    var agentSession = await agent.CreateSessionAsync();
     var response = await RunWithApprovalsAsync(agent, trimmed, agentSession);
-    ShowResponse(response.Text);
+    var reply = FinalAssistantText(response);
+    ShowResponse(reply);
     sessionStore.Append([
         new { role = "user", content = userMessage },
-        new { role = "assistant", content = response.Text ?? "" },
+        new { role = "assistant", content = reply },
     ]);
     return;
 }
@@ -62,9 +71,12 @@ while (true)
 
     // Trim history to stay within token budget before each API call
     var trimmed = HistoryTrimmer.Trim(savedHistory, MaxHistoryTokens);
+    // Fresh session per turn — see the note above where savedHistory is declared. The same session
+    // is reused only within this turn (across approval round-trips) by RunWithApprovalsAsync.
+    var agentSession = await agent.CreateSessionAsync();
     var response = await RunWithApprovalsAsync(agent, trimmed, agentSession);
 
-    var responseText = response.Text ?? "";
+    var responseText = FinalAssistantText(response);
     savedHistory.Add(new ChatMessage(ChatRole.Assistant, responseText));
 
     ShowResponse(responseText);
@@ -76,6 +88,19 @@ while (true)
 }
 
 // ── Helpers ────────────────────────────────────────────────────
+
+// Returns only the final assistant message's text. AgentResponse.Text concatenates the text of
+// every message produced during a turn — including intermediate narration the model emits alongside
+// its tool calls — so multi-step (tool-using) turns would otherwise render the reply twice. The
+// user-facing answer is the last assistant message that actually carries text.
+static string FinalAssistantText(AgentResponse response)
+{
+    var text = response.Messages
+        .Where(m => m.Role == ChatRole.Assistant)
+        .Select(m => m.Text)
+        .LastOrDefault(t => !string.IsNullOrWhiteSpace(t));
+    return text ?? response.Text ?? "";
+}
 
 // Runs the agent and resolves any human-in-the-loop approval requests synchronously,
 // re-running on the same session until a final (approval-free) response is produced.
