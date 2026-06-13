@@ -1,5 +1,12 @@
 namespace DotClaw.Runtime;
 
+public enum ToolExecutionMode
+{
+    Cmd,
+    SandboxMcp,
+    CSharpSandbox,
+}
+
 /// <summary>
 /// Lightweight runtime configuration read from the shared AppConfiguration.
 /// The heartbeat is <b>off by default</b> — it is an opt-in ambient feature for the demo.
@@ -9,6 +16,28 @@ public static class DotClawConfig
     /// <summary>Whether the ambient heartbeat runner is enabled. Off by default.</summary>
     public static bool HeartbeatEnabled =>
         ParseBool(AppConfiguration.Instance["DotClaw:Heartbeat"], defaultValue: false);
+
+    /// <summary>
+    /// Selects how built-in file/command tools run.
+    /// Prefer <c>DotClaw:ToolMode</c>; legacy <c>DotClaw:Sandbox</c> is retained as a fallback.
+    /// </summary>
+    public static ToolExecutionMode ToolMode
+    {
+        get
+        {
+            var configured = ConfigValue("DotClaw:ToolMode", "DOTCLAW_TOOL_MODE");
+            if (!string.IsNullOrWhiteSpace(configured))
+                return ParseToolMode(configured);
+
+            var legacySandbox = ConfigValue("DotClaw:Sandbox", "DOTCLAW_SANDBOX");
+            if (string.IsNullOrWhiteSpace(legacySandbox))
+                return ToolExecutionMode.SandboxMcp;
+
+            return ParseLegacySandbox(legacySandbox)
+                ? ToolExecutionMode.SandboxMcp
+                : ToolExecutionMode.Cmd;
+        }
+    }
 
     /// <summary>How often the heartbeat ticks (seconds), default 45s.</summary>
     public static TimeSpan HeartbeatInterval
@@ -92,8 +121,31 @@ public static class DotClawConfig
 
     private static string? ConfigValue(string key, string legacyEnvironmentVariable)
     {
+        var legacyValue = Environment.GetEnvironmentVariable(legacyEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(legacyValue))
+            return legacyValue;
+
         var value = AppConfiguration.Instance[key];
-        return string.IsNullOrWhiteSpace(value) ? Environment.GetEnvironmentVariable(legacyEnvironmentVariable) : value;
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static ToolExecutionMode ParseToolMode(string value)
+    {
+        var normalized = value.Trim().ToLowerInvariant()
+            .Replace('_', '-')
+            .Replace(' ', '-');
+
+        return normalized switch
+        {
+            "cmd" or "host" or "direct" or "no-sandbox" or "cmd-no-sandbox" or "cmd-w/o-sandbox"
+                => ToolExecutionMode.Cmd,
+            "sandboxmcp" or "sandbox-mcp" or "mcp"
+                => ToolExecutionMode.SandboxMcp,
+            "csharp-sandbox" or "c#-sandbox" or "cs-sandbox" or "c-sharp-sandbox"
+                => ToolExecutionMode.CSharpSandbox,
+            _ => throw new InvalidOperationException(
+                $"Unsupported DotClaw:ToolMode '{value}'. Use one of: cmd, sandboxmcp, csharp-sandbox."),
+        };
     }
 
     private static bool ParseBool(string? v, bool defaultValue)
@@ -101,4 +153,7 @@ public static class DotClawConfig
         if (string.IsNullOrWhiteSpace(v)) return defaultValue;
         return v.Trim().ToLowerInvariant() is "1" or "true" or "on" or "yes";
     }
+
+    private static bool ParseLegacySandbox(string value) =>
+        value.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");
 }

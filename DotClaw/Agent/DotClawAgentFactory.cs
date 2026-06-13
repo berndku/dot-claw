@@ -45,10 +45,14 @@ public static class DotClawAgentFactory
 
         var policy = approvalPolicy ?? ApprovalPolicy.None;
 
-        var sandboxEnabled = SandboxEnabled();
-        var baseTools = sandboxEnabled
-            ? await SandboxTools.GetToolsAsync()
-            : AgentTools.CreateAll().Cast<AITool>().ToList();
+        var toolMode = DotClawConfig.ToolMode;
+        var baseTools = toolMode switch
+        {
+            ToolExecutionMode.Cmd => AgentTools.CreateAll().Cast<AITool>().ToList(),
+            ToolExecutionMode.SandboxMcp => await SandboxTools.GetToolsAsync(),
+            ToolExecutionMode.CSharpSandbox => CSharpSandboxTools.CreateAll().Cast<AITool>().ToList(),
+            _ => throw new InvalidOperationException($"Unsupported tool execution mode: {toolMode}"),
+        };
 
         // Copy: SandboxTools returns a shared cached list — never mutate it in place.
         // Always offer the send_message demo tool alongside the sandbox/in-process tools.
@@ -66,9 +70,13 @@ public static class DotClawAgentFactory
         // Gate the tools named by the policy by wrapping them in ApprovalRequiredAIFunction.
         tools = ApplyApprovalPolicy(tools, policy);
 
-        Console.WriteLine(sandboxEnabled
-            ? "[DotClaw] tools: MXC sandbox (via MCP)"
-            : "[DotClaw] tools: in-process C# (DOTCLAW_SANDBOX=off)");
+        Console.WriteLine(toolMode switch
+        {
+            ToolExecutionMode.Cmd => "[DotClaw] tools: cmd (no sandbox)",
+            ToolExecutionMode.SandboxMcp => "[DotClaw] tools: MXC sandbox (via MCP)",
+            ToolExecutionMode.CSharpSandbox => "[DotClaw] tools: MXC sandbox (in-process C#)",
+            _ => $"[DotClaw] tools: {toolMode}",
+        });
         if (!policy.IsEmpty)
             Console.WriteLine("[DotClaw] approval-required tools: " + string.Join(", ", policy.GatedNames));
 
@@ -111,14 +119,6 @@ public static class DotClawAgentFactory
                 ? (AITool)new ApprovalRequiredAIFunction(f)
                 : t)
             .ToList();
-    }
-
-    private static bool SandboxEnabled()
-    {
-        var v = AppConfiguration.Instance["DotClaw:Sandbox"];
-        if (string.IsNullOrWhiteSpace(v))
-            return true;
-        return v.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");
     }
 
     private static string? AzureOpenAIKey()

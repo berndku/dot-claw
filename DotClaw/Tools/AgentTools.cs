@@ -13,6 +13,9 @@ using Spectre.Console;
 public static class AgentTools
 {
     private const int MaxToolOutputChars = 8000;
+    private const string ReadFileToolName = "read_file";
+    private const string WriteFileToolName = "write_file";
+    private const string ExecToolName = "exec";
 
     private static readonly string[] DangerousPatterns =
     [
@@ -149,9 +152,9 @@ public static class AgentTools
     /// <summary>Creates the list of AIFunctions for MAF registration.</summary>
     public static IList<AIFunction> CreateAll() =>
     [
-        AIFunctionFactory.Create(ReadFile),
-        AIFunctionFactory.Create(WriteFile),
-        AIFunctionFactory.Create(Exec),
+        AIFunctionFactory.Create(ReadFile, ReadFileToolName),
+        AIFunctionFactory.Create(WriteFile, WriteFileToolName),
+        AIFunctionFactory.Create(Exec, ExecToolName),
     ];
 
     private static async Task AtomicWriteAsync(string path, string content)

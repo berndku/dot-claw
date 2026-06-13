@@ -14,17 +14,23 @@ tinkering, not production.
   here too; just grant the appropriate data plane role to your user or managed identity.
 
 ### For MXC
-- Node.js ≥ 18 
+- Node.js ≥ 18 if you use the `sandboxmcp` tool mode.
 - **Windows 11 24H2+ (build 26100+)** for MXC's default `processcontainer` backend.
 - **One-time admin host-prep** so a shell can start inside an AppContainer. Without it you'll see
   `BaseContainer is unavailable; DACL fallback requires write-DAC permission ...`. Run once from an
-  **elevated** prompt (binary ships in the npm package):
+  **elevated** prompt.
+
+For `sandboxmcp`, the binary ships in the npm package:
 
   ```powershell
   $bin = "DotClaw.SandboxMcp\node_modules\@microsoft\mxc-sdk\bin\x64"
   & "$bin\wxc-host-prep.exe" prepare-system-drive   # once per machine
   & "$bin\wxc-host-prep.exe" prepare-null-device    # once per boot
   ```
+
+For `csharp-sandbox`, download `mxc-release-binaries.zip` from
+[microsoft/mxc releases](https://github.com/microsoft/mxc/releases), unzip it, and set `MXC_BIN_DIR`
+to the folder that contains `<arch>\wxc-exec.exe`.
 
 - MXC is an **early preview** — Microsoft states its profiles are **not** security boundaries yet.
   Treat this as a demonstration of sandboxed tool execution, not a hardened isolation guarantee.
@@ -67,7 +73,7 @@ Edit `appsettings.local.json`:
   "DotClaw": {
     "Heartbeat": false,
     "HeartbeatIntervalSeconds": 45,
-    "Sandbox": true,
+    "ToolMode": "sandboxmcp",
     "ApprovalTools": [ "send_message" ]
   }
 }
@@ -79,19 +85,32 @@ identity. If you provide a key, DotClaw uses key-based authentication for that s
 
 ## Run
 
-Restore once, then decide whether to use the MXC sandbox before picking a frontend. Both frontends
-share the same agent, configuration, and workspace.
+Restore once, then decide which command/tool execution mode to use before picking a frontend. Both
+frontends share the same agent, configuration, and workspace.
 
 ```bash
 dotnet restore
 ```
 
-### 1) The MXC sandbox (recommended, default)
+### 1) Pick a tool execution mode
+
+Configure `DotClaw:ToolMode` with one of:
+
+| Value | Behavior |
+| --- | --- |
+| `cmd` | Runs the built-in C# tools directly on the host. This is cmd without a sandbox. |
+| `sandboxmcp` | Runs tools through the Node/TypeScript MCP sidecar wrapping `@microsoft/mxc-sdk`. This is the default. |
+| `csharp-sandbox` | Runs tools in-process through `Sabbour.Mxc.Sdk`, without the MCP/Node sidecar. |
+
+The legacy `DotClaw:Sandbox` boolean is still accepted when `DotClaw:ToolMode` is not set:
+`true` maps to `sandboxmcp`, and `false` maps to `cmd`.
+
+#### `sandboxmcp` mode (default)
 
 By default DotClaw runs its `exec` tool inside a
 [**MXC**](https://github.com/microsoft/mxc) (Microsoft eXecution Container) process sandbox instead of
-directly on the host. MXC has no .NET SDK — only a TypeScript one — so a tiny **Node/TypeScript MCP
-server** (`DotClaw.SandboxMcp/`) wraps `@microsoft/mxc-sdk` and DotClaw consumes it over stdio MCP.
+directly on the host. The **Node/TypeScript MCP server** (`DotClaw.SandboxMcp/`) wraps
+`@microsoft/mxc-sdk` and DotClaw consumes it over stdio MCP.
 
 
 **Sandbox on (default).** Build the Node sandbox server once — this works for both the CLI and the
@@ -107,8 +126,33 @@ The `@microsoft/mxc-sdk` npm package bundles the native `wxc-exec.exe`, so no Ru
 C# locates the server at `DotClaw.SandboxMcp/dist/server.js` by default; override with
 `DOTCLAW_SANDBOX_MCP_DIR`. See [the MXC requirements](#for-mxc) above for the one-time host prep.
 
-**Sandbox off.** Skip the Node build and run tools directly on the host by setting `DotClaw:Sandbox`
-to `false` in `appsettings.local.json`.
+#### `csharp-sandbox` mode
+
+Use the experimental in-process .NET MXC SDK path by setting:
+
+```json
+{
+  "DotClaw": {
+    "ToolMode": "csharp-sandbox"
+  }
+}
+```
+
+This keeps the same tool surface (`exec`, `read_file`, `write_file`) but calls `Sabbour.Mxc.Sdk`
+directly from the DotClaw process instead of spawning the MCP sidecar. It still requires the MXC
+native executor and host prep described in [For MXC](#for-mxc).
+
+#### `cmd` mode
+
+Skip MXC and run tools directly on the host by setting:
+
+```json
+{
+  "DotClaw": {
+    "ToolMode": "cmd"
+  }
+}
+```
 
 
 ### 2) Pick a frontend
@@ -131,4 +175,3 @@ dotnet run
 
 Connects to your bot using `Telegram:BotToken` and serves chat (and voice notes, if Azure Speech is
 configured). Run this instead of the CLI when you want to talk to DotClaw from your phone.
-
