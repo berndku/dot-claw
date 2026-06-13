@@ -20,10 +20,35 @@ public static class CSharpSandboxTools
     private const string ReadFileToolName = "read_file";
     private const string WriteFileToolName = "write_file";
     private const string ExecToolName = "exec";
+    private const string MxcBinDirVar = "MXC_BIN_DIR";
     private static readonly char[] CmdUnsafePathChars = ['"', '%', '&', '|', '<', '>', '^', '\r', '\n'];
 
     private static readonly SandboxSpawner Spawner = new();
     private static readonly SemaphoreSlim FileToolLock = new(1, 1);
+
+    static CSharpSandboxTools() => EnsureMxcBinDir();
+
+    /// <summary>
+    /// The Sabbour.Mxc.Sdk resolves the native <c>wxc-exec.exe</c> via the <c>MXC_BIN_DIR</c>
+    /// environment variable. A long-running host (already-open VS Code, a service, a bot started
+    /// before the variable was persisted) may not have inherited it into its process environment
+    /// even though it is set at the User/Machine scope. Backfill the process-scoped value from the
+    /// persisted scopes so the sandbox keeps working without requiring a full machine restart.
+    /// </summary>
+    private static void EnsureMxcBinDir()
+    {
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(MxcBinDirVar)))
+            return;
+
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var persisted = Environment.GetEnvironmentVariable(MxcBinDirVar, EnvironmentVariableTarget.User)
+            ?? Environment.GetEnvironmentVariable(MxcBinDirVar, EnvironmentVariableTarget.Machine);
+
+        if (!string.IsNullOrWhiteSpace(persisted))
+            Environment.SetEnvironmentVariable(MxcBinDirVar, persisted);
+    }
 
     [Description("Read the contents of a file inside the persistent DotClaw workspace.")]
     public static async Task<string> ReadFile(
