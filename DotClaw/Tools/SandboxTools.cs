@@ -32,7 +32,7 @@ public static class SandboxTools
                 $"Sandbox MCP server is not built.\n" +
                 $"Expected: {serverScript}\n" +
                 $"Build it with:  cd \"{dir}\"  &&  npm install  &&  npm run build\n" +
-                $"(or set DOTCLAW_SANDBOX=off to use the in-process C# tools instead).",
+                $"(or set DotClaw:ToolMode=cmd to use the direct host tools instead).",
                 serverScript);
         }
 

@@ -13,18 +13,25 @@ using DotClaw.Runtime;
 public sealed class ApprovalPolicy
 {
     private readonly HashSet<string> _names;
+    private readonly string[] _gatedNames;
 
     public ApprovalPolicy(IEnumerable<string> toolNames)
-        => _names = new HashSet<string>(toolNames, StringComparer.OrdinalIgnoreCase);
+    {
+        _gatedNames = toolNames
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name.Trim())
+            .ToArray();
+        _names = new HashSet<string>(_gatedNames.Select(NormalizeName), StringComparer.OrdinalIgnoreCase);
+    }
 
     /// <summary>True when no tool requires approval (gating is effectively disabled).</summary>
     public bool IsEmpty => _names.Count == 0;
 
     /// <summary>The set of tool names that require approval (for logging/display).</summary>
-    public IReadOnlyCollection<string> GatedNames => _names;
+    public IReadOnlyCollection<string> GatedNames => _gatedNames;
 
     /// <summary>Whether the named tool must be approved before it runs.</summary>
-    public bool RequiresApproval(string toolName) => _names.Contains(toolName);
+    public bool RequiresApproval(string toolName) => _names.Contains(NormalizeName(toolName));
 
     /// <summary>
     /// Reads the gated tool names from the <c>DotClaw:ApprovalTools</c> appsettings array,
@@ -41,4 +48,8 @@ public sealed class ApprovalPolicy
 
     /// <summary>A policy that gates nothing — preserves default (no-approval) behavior.</summary>
     public static readonly ApprovalPolicy None = new(Array.Empty<string>());
+
+    private static string NormalizeName(string toolName) =>
+        toolName.Replace("_", "", StringComparison.Ordinal)
+            .Replace("-", "", StringComparison.Ordinal);
 }
