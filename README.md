@@ -35,6 +35,37 @@ to the folder that contains `<arch>\wxc-exec.exe`.
 - MXC is an **early preview** — Microsoft states its profiles are **not** security boundaries yet.
   Treat this as a demonstration of sandboxed tool execution, not a hardened isolation guarantee.
 
+#### Troubleshooting: `E_NOTIMPL` / velocity-key gate
+
+DotClaw pins the policy schema to `0.6.0-alpha` (in `DotClaw.SandboxMcp/src/server.ts` and
+`DotClaw/Tools/CSharpSandboxTools.cs`), which selects MXC's gated **`base-container`** tier. That tier
+sits behind a Windows Feature Store gate, so on builds where the gate is closed the executor returns
+`E_NOTIMPL` even though the kernel API is present:
+
+```
+Experimental_CreateProcessInSandbox returned E_NOTIMPL. The following velocity keys are not enabled:
+61389575, 61155944. Enable them and retry, or use schema version '0.4.0-alpha' to fall back to the
+AppContainer backend.
+```
+
+You have two options:
+
+**Option A — ViVeTool (light up the `base-container` tier).** Download
+[ViVeTool](https://github.com/thebookisclosed/ViVe) for your CPU arch, run **elevated**, then
+**reboot**:
+
+  ```powershell
+  # Use comma-separated IDs — repeated /id: flags are rejected.
+  .\ViVeTool.exe /enable /id:61389575,61155944
+  .\ViVeTool.exe /query  /id:61389575   # should report Enabled before you retry
+  ```
+
+**Option B — fall back to AppContainer (no ViVeTool).** Schema `0.4.0-alpha` takes the ungated
+AppContainer path. In DotClaw that means changing the pinned schema constants (`SCHEMA_VERSION` /
+`SchemaVersion`) to `0.4.0-alpha` — but you then still need the DACL host-prep
+(`wxc-host-prep.exe prepare-system-drive` / `prepare-null-device`) above, otherwise you'll hit
+`BaseContainer is unavailable; DACL fallback requires write-DAC permission ...`.
+
 
 ## Configuration
 
