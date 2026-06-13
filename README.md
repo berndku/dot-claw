@@ -16,11 +16,11 @@ tinkering, not production.
 ### For MXC
 - Node.js ≥ 18 if you use the `sandboxmcp` tool mode.
 - **Windows 11 24H2+ (build 26100+)** for MXC's default `processcontainer` backend.
-- **One-time admin host-prep** so a shell can start inside an AppContainer. Without it you'll see
-  `BaseContainer is unavailable; DACL fallback requires write-DAC permission ...`. Run once from an
-  **elevated** prompt.
+- **One-time admin host-prep** for both MXC modes so a shell can start inside an AppContainer.
+  Without it you'll see `BaseContainer is unavailable; DACL fallback requires write-DAC permission ...`.
+  Run from an **elevated** prompt.
 
-For `sandboxmcp`, the binary ships in the npm package:
+For `sandboxmcp`, the prep binary ships in the npm package:
 
   ```powershell
   $bin = "DotClaw.SandboxMcp\node_modules\@microsoft\mxc-sdk\bin\x64"
@@ -30,7 +30,14 @@ For `sandboxmcp`, the binary ships in the npm package:
 
 For `csharp-sandbox`, download `mxc-release-binaries.zip` from
 [microsoft/mxc releases](https://github.com/microsoft/mxc/releases), unzip it, and set `MXC_BIN_DIR`
-to the folder that contains `<arch>\wxc-exec.exe`.
+to the folder that contains `<arch>\wxc-exec.exe`. Use the `wxc-host-prep.exe` from the same release
+binary folder:
+
+  ```powershell
+  $bin = "$env:MXC_BIN_DIR\x64"
+  & "$bin\wxc-host-prep.exe" prepare-system-drive   # once per machine
+  & "$bin\wxc-host-prep.exe" prepare-null-device    # once per boot
+  ```
 
 - MXC is an **early preview** — Microsoft states its profiles are **not** security boundaries yet.
   Treat this as a demonstration of sandboxed tool execution, not a hardened isolation guarantee.
