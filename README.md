@@ -102,8 +102,8 @@ Edit `appsettings.local.json`:
     "Locales": [ "de-DE", "en-US" ]
   },
   "DotClaw": {
-    "Heartbeat": false,
-    "HeartbeatIntervalSeconds": 45,
+    "Heartbeat": true,
+    "HeartbeatIntervalSeconds": 120,
     "ToolMode": "sandboxmcp",
     "WebSearch": true,
     "ApprovalTools": [ "send_message" ]

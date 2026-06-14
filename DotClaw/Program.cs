@@ -58,8 +58,30 @@ if (args.Length > 0)
     return;
 }
 
+// ── Heartbeat: ambient memory safety-net ───────────────────────
+// A background timer that periodically runs a silent "anything worth remembering?" turn against the
+// live history, so the agent can persist durable user facts to USER.md/MEMORY.md even when the user
+// has gone quiet. It shares `turnLock` with the interactive loop, so a heartbeat turn and a user turn
+// never run — or write workspace files — concurrently. Unlike cron it never speaks to the user: its
+// only effect is the workspace writes its tools perform mid-turn. A HEARTBEAT_OK (or empty) reply
+// means "nothing new"; any other reply is swallowed rather than printed.
+var turnLock = new SemaphoreSlim(1, 1);
+using var heartbeatCts = new CancellationTokenSource();
+
+if (DotClawConfig.HeartbeatEnabled)
+{
+    var (heartbeatAgent, heartbeatMemory) = await DotClawAgentFactory.CreateAsync(
+        source: TurnSource.Heartbeat);
+    _ = Task.Run(() => HeartbeatLoopAsync(
+        heartbeatAgent, heartbeatMemory, savedHistory, turnLock,
+        DotClawConfig.HeartbeatInterval, MaxHistoryTokens, heartbeatCts.Token));
+}
+
 // ── Interactive loop ───────────────────────────────────────────
-AnsiConsole.MarkupLine("[bold]🦞 DotClaw AI Assistant[/] — type [dim]exit[/] or [dim]quit[/] to stop\n");
+var heartbeatNote = DotClawConfig.HeartbeatEnabled
+    ? $" — [dim]🫀 memory heartbeat every {DotClawConfig.HeartbeatInterval.TotalSeconds:0}s[/]"
+    : "";
+AnsiConsole.MarkupLine($"[bold]🦞 DotClaw AI Assistant[/] — type [dim]exit[/] or [dim]quit[/] to stop{heartbeatNote}\n");
 
 while (true)
 {
@@ -70,32 +92,89 @@ while (true)
     if (userInput.Equals("exit", StringComparison.OrdinalIgnoreCase) ||
         userInput.Equals("quit", StringComparison.OrdinalIgnoreCase))
     {
+        heartbeatCts.Cancel();
         AnsiConsole.MarkupLine("[dim]Goodbye.[/]");
         break;
     }
 
-    savedHistory.Add(new ChatMessage(ChatRole.User, userInput));
+    // Serialize against the heartbeat so the two never run — or write workspace files — at once.
+    await turnLock.WaitAsync();
+    try
+    {
+        savedHistory.Add(new ChatMessage(ChatRole.User, userInput));
 
-    // Trim history to stay within token budget before each API call
-    var trimmed = HistoryTrimmer.Trim(savedHistory, MaxHistoryTokens);
-    // Fresh session per turn — see the note above where savedHistory is declared. The same session
-    // is reused only within this turn (across approval round-trips) by RunWithApprovalsAsync.
-    var agentSession = await agent.CreateSessionAsync();
-    var response = await RunWithApprovalsAsync(agent, trimmed, agentSession);
+        // Trim history to stay within token budget before each API call
+        var trimmed = HistoryTrimmer.Trim(savedHistory, MaxHistoryTokens);
+        // Fresh session per turn — see the note above where savedHistory is declared. The same session
+        // is reused only within this turn (across approval round-trips) by RunWithApprovalsAsync.
+        var agentSession = await agent.CreateSessionAsync();
+        var response = await RunWithApprovalsAsync(agent, trimmed, agentSession);
 
-    var responseText = FinalAssistantText(response);
-    savedHistory.Add(new ChatMessage(ChatRole.Assistant, responseText));
+        var responseText = FinalAssistantText(response);
+        savedHistory.Add(new ChatMessage(ChatRole.Assistant, responseText));
 
-    ShowWebSearchCalls(response);
-    ShowResponse(responseText);
-    sessionStore.Append([
-        new { role = "user", content = userInput },
-        new { role = "assistant", content = responseText },
-    ]);
+        ShowWebSearchCalls(response);
+        ShowResponse(responseText);
+        sessionStore.Append([
+            new { role = "user", content = userInput },
+            new { role = "assistant", content = responseText },
+        ]);
+    }
+    finally
+    {
+        turnLock.Release();
+    }
     AnsiConsole.WriteLine();
 }
 
 // ── Helpers ────────────────────────────────────────────────────
+
+// The ambient heartbeat loop (interactive mode only). Every `interval`, it runs one silent agent turn
+// whose sole purpose is to let the model persist anything new worth remembering — it produces no
+// console output of its own. Serialized with user turns via `turnLock`. A null prompt means
+// HEARTBEAT.md has no actionable (non-comment) content, so the tick is skipped. Exceptions are
+// swallowed so a transient failure (e.g. a network blip) never tears down the CLI.
+static async Task HeartbeatLoopAsync(
+    AIAgent heartbeatAgent, WorkspaceMemoryProvider heartbeatMemory,
+    List<ChatMessage> history, SemaphoreSlim turnLock,
+    TimeSpan interval, int maxHistoryTokens, CancellationToken ct)
+{
+    using var timer = new PeriodicTimer(interval);
+    try
+    {
+        while (await timer.WaitForNextTickAsync(ct))
+        {
+            // Re-read HEARTBEAT.md each tick so live edits take effect without a restart.
+            var prompt = AgentRunner.BuildHeartbeatPrompt(heartbeatMemory);
+            if (prompt is null)
+                continue; // empty / comments-only — nothing to check.
+
+            await turnLock.WaitAsync(ct);
+            try
+            {
+                // Snapshot the live transcript (Trim returns a copy) and append the heartbeat
+                // instruction as a system turn — `history` itself is left untouched.
+                var snapshot = HistoryTrimmer.Trim(history, maxHistoryTokens);
+                snapshot.Add(new ChatMessage(ChatRole.System, prompt));
+
+                // Fresh session per tick (avoids the double-feed described in the main loop). The
+                // heartbeat agent is built with ApprovalPolicy.None, so any write_file runs ungated
+                // and silently; we intentionally ignore the reply and never print it.
+                var session = await heartbeatAgent.CreateSessionAsync();
+                await heartbeatAgent.RunAsync(snapshot, session);
+            }
+            finally
+            {
+                turnLock.Release();
+            }
+        }
+    }
+    catch (OperationCanceledException) { /* CLI shutting down — expected. */ }
+    catch (Exception ex)
+    {
+        AnsiConsole.MarkupLine($"[dim]🫀 heartbeat stopped: {Markup.Escape(ex.Message)}[/]");
+    }
+}
 
 // Returns only the final assistant message's text. AgentResponse.Text concatenates the text of
 // every message produced during a turn — including intermediate narration the model emits alongside
