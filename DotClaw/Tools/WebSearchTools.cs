@@ -32,6 +32,20 @@ public static class WebSearchTools
     private static readonly Lazy<Task<IList<AITool>>> Lazy = new(InitAsync);
     private static McpClient? _client;
 
+    private static readonly HashSet<string> LoadedToolNames = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Names of the web-search tools actually loaded from the remote MCP (typically
+    /// <c>web_search</c> and <c>web_fetch</c>). Empty until <see cref="GetToolsAsync"/> has run, or
+    /// when web search is disabled/unavailable. Frontends use this to recognize web-search tool
+    /// calls in an agent response so they can surface them in the transcript.
+    /// </summary>
+    public static IReadOnlyCollection<string> LoadedTools => LoadedToolNames;
+
+    /// <summary>True when <paramref name="name"/> matches one of the loaded web-search tools.</summary>
+    public static bool IsWebSearchTool(string? name) =>
+        !string.IsNullOrEmpty(name) && LoadedToolNames.Contains(name);
+
     /// <summary>
     /// Returns the remote web-search tools, connecting to Parallel's Search MCP on first call.
     /// Never throws: on failure it logs a warning and returns an empty list (fail-soft).
@@ -63,7 +77,13 @@ public static class WebSearchTools
             };
 
             var tools = await client.ListToolsAsync();
-            return tools.Cast<AITool>().ToList();
+            var aiTools = tools.Cast<AITool>().ToList();
+
+            // Remember the loaded names so frontends can recognize and display these tool calls.
+            foreach (var tool in aiTools)
+                LoadedToolNames.Add(tool.Name);
+
+            return aiTools;
         }
         catch (Exception ex)
         {

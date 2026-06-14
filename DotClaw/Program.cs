@@ -43,6 +43,7 @@ if (args.Length > 0)
     var agentSession = await agent.CreateSessionAsync();
     var response = await RunWithApprovalsAsync(agent, trimmed, agentSession);
     var reply = FinalAssistantText(response);
+    ShowWebSearchCalls(response);
     ShowResponse(reply);
     sessionStore.Append([
         new { role = "user", content = userMessage },
@@ -79,6 +80,7 @@ while (true)
     var responseText = FinalAssistantText(response);
     savedHistory.Add(new ChatMessage(ChatRole.Assistant, responseText));
 
+    ShowWebSearchCalls(response);
     ShowResponse(responseText);
     sessionStore.Append([
         new { role = "user", content = userInput },
@@ -162,4 +164,39 @@ static void ShowResponse(string? text)
         BorderStyle = new Style(Color.Green),
     };
     AnsiConsole.Write(panel);
+}
+
+// Surfaces any web_search/web_fetch tool calls the agent made during the turn, so the user can see
+// when DotClaw reached out to the web. The CLI turn isn't streamed, so these are printed after the
+// run completes, just before the assistant's reply. Web search being off/unavailable yields no
+// loaded tool names, so nothing is shown.
+static void ShowWebSearchCalls(AgentResponse response)
+{
+    var calls = response.Messages
+        .SelectMany(m => m.Contents)
+        .OfType<FunctionCallContent>()
+        .Where(c => WebSearchTools.IsWebSearchTool(c.Name))
+        .ToList();
+
+    foreach (var call in calls)
+    {
+        var args = FormatToolArgs(call.Arguments);
+        var suffix = string.IsNullOrEmpty(args) ? "" : $" [dim]{Markup.Escape(args)}[/]";
+        AnsiConsole.MarkupLine($"  [magenta]🔎 web[/] [white]{Markup.Escape(call.Name)}[/]{suffix}");
+    }
+}
+
+static string FormatToolArgs(IDictionary<string, object?>? arguments)
+{
+    if (arguments is null || arguments.Count == 0)
+        return "";
+
+    static string Compact(string value)
+    {
+        var oneLine = value.Replace("\r", " ").Replace("\n", " ").Trim();
+        return oneLine.Length > 120 ? oneLine[..117] + "..." : oneLine;
+    }
+
+    return string.Join("  ", arguments
+        .Select(kv => $"{kv.Key}: {Compact(kv.Value?.ToString() ?? "")}"));
 }
