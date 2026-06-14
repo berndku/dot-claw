@@ -34,7 +34,7 @@ Then talk through `SOUL.md` together (it's already in your context) and cover:
 - How they want you to behave
 - Any boundaries or preferences
 
-Write it down. Make it real.
+Ask for these Soul preferences in one compact message unless the user already provided them. If they say the default Soul is fine, leave `SOUL.md` unchanged and treat that as complete. If they provide changes, update `SOUL.md` with `write_file` in the same turn and tell them you changed it.
 
 ## When you are done
 
