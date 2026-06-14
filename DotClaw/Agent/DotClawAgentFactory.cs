@@ -116,10 +116,39 @@ public static class DotClawAgentFactory
             AIContextProviders = [memory],
         };
 
-        var agent = client
+        // Build the chat client, optionally wrapping it with OpenTelemetry so each model round-trip
+        // (including tool-calling iterations) is traced. EnableSensitiveData adds the LLM
+        // request/response content to the spans — see DotClawConfig.OtelCaptureMessageContent.
+        var otelEnabled = DotClawConfig.OtelEnabled;
+        var captureContent = DotClawConfig.OtelCaptureMessageContent;
+
+        var chatClient = client
             .GetChatClient(ModelDeployment)
-            .AsIChatClient()
-            .AsAIAgent(options);
+            .AsIChatClient();
+
+        if (otelEnabled)
+        {
+            chatClient = chatClient
+                .AsBuilder()
+                .UseOpenTelemetry(
+                    sourceName: Telemetry.ActivitySourceName,
+                    configure: cfg => cfg.EnableSensitiveData = captureContent)
+                .Build();
+        }
+
+        AIAgent agent = chatClient.AsAIAgent(options);
+
+        // Wrap the agent so the whole turn surfaces as a single `invoke_agent` span that parents the
+        // chat-completion spans above.
+        if (otelEnabled)
+        {
+            agent = agent
+                .AsBuilder()
+                .UseOpenTelemetry(
+                    sourceName: Telemetry.ActivitySourceName,
+                    configure: cfg => cfg.EnableSensitiveData = captureContent)
+                .Build();
+        }
 
         return (agent, memory);
     }

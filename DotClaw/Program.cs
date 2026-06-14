@@ -1,4 +1,5 @@
 using DotClaw.Agent;
+using DotClaw.Runtime;
 using DotClaw.Session;
 using DotClaw.Tools;
 using Microsoft.Agents.AI;
@@ -6,6 +7,11 @@ using Microsoft.Extensions.AI;
 using Spectre.Console;
 
 const int MaxHistoryTokens = 16000;
+
+// ── OpenTelemetry tracing (opt-in) ─────────────────────────────
+// Exports agent + chat-completion GenAI spans over OTLP (e.g. to the Aspire dashboard). No-op when
+// DotClaw:Otel:Enabled is false. Kept alive for the whole process; disposal flushes pending spans.
+using var tracerProvider = Telemetry.TryInitialize();
 
 // ── Build the MAF Agent (via shared factory) ───────────────────
 var (agent, memory) = await DotClawAgentFactory.CreateAsync(
