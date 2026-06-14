@@ -14,8 +14,10 @@ const int MaxHistoryTokens = 16000;
 using var tracerProvider = Telemetry.TryInitialize();
 
 // ── Build the MAF Agent (via shared factory) ───────────────────
+var approvalPolicy = ApprovalPolicy.FromConfiguration(defaults: [MessagingTools.ToolName]);
+await DotClawAgentFactory.LogStartupStatusAsync(approvalPolicy);
 var (agent, memory) = await DotClawAgentFactory.CreateAsync(
-    approvalPolicy: ApprovalPolicy.FromConfiguration(defaults: [MessagingTools.ToolName]));
+    approvalPolicy: approvalPolicy);
 
 // ── Session ────────────────────────────────────────────────────
 var sessionStore = new SessionManager("cli:default");

@@ -1,7 +1,9 @@
 using System.Threading.Channels;
+using DotClaw.Agent;
 using DotClaw.Cron;
 using DotClaw.Runtime;
 using DotClaw.Telegram;
+using DotClaw.Tools;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -24,6 +26,8 @@ var bot = new TelegramBotClient(botToken);
 var me = await bot.GetMe();
 Console.WriteLine($"🦞 DotClaw Telegram Gateway — connected as @{me.Username}");
 Console.WriteLine("Listening for messages... (Ctrl+C to stop)\n");
+var approvalPolicy = ApprovalPolicy.FromConfiguration(defaults: [MessagingTools.ToolName]);
+await DotClawAgentFactory.LogStartupStatusAsync(approvalPolicy);
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };

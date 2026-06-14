@@ -27,6 +27,43 @@ public static class DotClawAgentFactory
             "AzureOpenAI:Model not configured. Copy appsettings.json to appsettings.local.json and fill in your values.");
 
     /// <summary>
+    /// Writes the process-start configuration summary. Runtime agent creation stays quiet so
+    /// Telegram message, heartbeat, approval, and cron turns do not repeat these status lines.
+    /// </summary>
+    public static async Task LogStartupStatusAsync(ApprovalPolicy? approvalPolicy = null)
+    {
+        var key = AzureOpenAIKey();
+        var toolMode = DotClawConfig.ToolMode;
+        var webSearchEnabled = DotClawConfig.WebSearchEnabled;
+        var webSearchTools = webSearchEnabled
+            ? await WebSearchTools.GetToolsAsync()
+            : [];
+
+        Console.WriteLine(toolMode switch
+        {
+            ToolExecutionMode.Cmd => "[DotClaw] tools: cmd (no sandbox)",
+            ToolExecutionMode.SandboxMcp => "[DotClaw] tools: MXC sandbox (via MCP)",
+            ToolExecutionMode.CSharpSandbox => "[DotClaw] tools: MXC sandbox (in-process C#)",
+            _ => $"[DotClaw] tools: {toolMode}",
+        });
+
+        var policy = approvalPolicy ?? ApprovalPolicy.None;
+        if (!policy.IsEmpty)
+            Console.WriteLine("[DotClaw] approval-required tools: " + string.Join(", ", policy.GatedNames));
+
+        Console.WriteLine(webSearchEnabled
+            ? (webSearchTools.Count > 0
+                ? $"[DotClaw] web search: Parallel Search MCP ({webSearchTools.Count} tool(s))"
+                : "[DotClaw] web search: enabled but unavailable (remote MCP unreachable)")
+            : "[DotClaw] web search: disabled");
+
+        Console.WriteLine($"[DotClaw] model: {ModelDeployment} @ {Endpoint}");
+        Console.WriteLine(string.IsNullOrWhiteSpace(key)
+            ? "[DotClaw] Azure OpenAI auth: Microsoft Entra ID"
+            : "[DotClaw] Azure OpenAI auth: key");
+    }
+
+    /// <summary>
     /// Creates a fully configured AIAgent with tools and system prompt.
     /// Authenticates with DefaultAzureCredential unless AzureOpenAI:Key is configured.
     /// </summary>
@@ -78,27 +115,6 @@ public static class DotClawAgentFactory
 
         // Gate the tools named by the policy by wrapping them in ApprovalRequiredAIFunction.
         tools = ApplyApprovalPolicy(tools, policy);
-
-        Console.WriteLine(toolMode switch
-        {
-            ToolExecutionMode.Cmd => "[DotClaw] tools: cmd (no sandbox)",
-            ToolExecutionMode.SandboxMcp => "[DotClaw] tools: MXC sandbox (via MCP)",
-            ToolExecutionMode.CSharpSandbox => "[DotClaw] tools: MXC sandbox (in-process C#)",
-            _ => $"[DotClaw] tools: {toolMode}",
-        });
-        if (!policy.IsEmpty)
-            Console.WriteLine("[DotClaw] approval-required tools: " + string.Join(", ", policy.GatedNames));
-
-        Console.WriteLine(webSearchEnabled
-            ? (webSearchTools.Count > 0
-                ? $"[DotClaw] web search: Parallel Search MCP ({webSearchTools.Count} tool(s))"
-                : "[DotClaw] web search: enabled but unavailable (remote MCP unreachable)")
-            : "[DotClaw] web search: disabled");
-
-        Console.WriteLine($"[DotClaw] model: {ModelDeployment} @ {Endpoint}");
-        Console.WriteLine(string.IsNullOrWhiteSpace(key)
-            ? "[DotClaw] Azure OpenAI auth: Microsoft Entra ID"
-            : "[DotClaw] Azure OpenAI auth: key");
 
         var options = new ChatClientAgentOptions
         {
