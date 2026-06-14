@@ -219,7 +219,13 @@ public sealed class AgentRunner
         return HistoryTrimmer.Trim(history, MaxHistoryTokens);
     }
 
-    private static string? BuildHeartbeatPrompt(WorkspaceMemoryProvider memory)
+    /// <summary>
+    /// Builds the per-tick heartbeat system prompt from the workspace's <c>HEARTBEAT.md</c>, or
+    /// returns <c>null</c> when that file has no actionable (non-comment) content. Public so the CLI
+    /// frontend — which runs its own lightweight heartbeat loop rather than the channel/consumer the
+    /// Telegram gateway uses — can share the exact same gating and framing.
+    /// </summary>
+    public static string? BuildHeartbeatPrompt(WorkspaceMemoryProvider memory)
     {
         var custom = memory.TryReadRaw("HEARTBEAT.md");
         if (!HasHeartbeatInstructions(custom))

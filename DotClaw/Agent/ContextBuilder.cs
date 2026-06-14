@@ -25,6 +25,19 @@ public static class ContextBuilder
         sb.AppendLine($"Working directory: {memory.Workspace}");
         sb.AppendLine("Use the tools available to you. If an operation fails, adapt and try a different approach — don't speculate about system limitations you haven't encountered.");
 
+        // Memory is the assistant's single biggest failure mode: it acknowledges a durable fact in
+        // prose ("noted!") and then never persists it, so the fact is gone when the session ends.
+        // This lives in the immutable base instructions (not just AGENTS.md) so the directive is
+        // high-priority on every turn, including turns whose main job is some other task.
+        sb.AppendLine();
+        sb.AppendLine(
+            "Remember your human. The moment the user reveals a durable fact about themselves — their name, "
+            + "where they live, nationality, timezone, pronouns, preferences, important people or projects, or "
+            + "anything they ask you to remember — persist it in the same turn with write_file: profile facts go "
+            + "in USER.md, other lasting notes in MEMORY.md. Read the file first and merge; never overwrite "
+            + "existing content. Save before or alongside your reply, not \"later\" — a verbal acknowledgement is "
+            + "not memory; only a file write survives the session ending. Persist silently; don't announce it.");
+
         if (!string.IsNullOrEmpty(channel))
             sb.AppendLine($"Channel: {channel}");
         if (!string.IsNullOrEmpty(chatId))
