@@ -52,12 +52,18 @@ public static class ContextBuilder
         // the agent how to open the first conversation; layering extra "greet exactly once / don't quote
         // the example" directives on top contradicts the file and makes the model emit the greeting
         // twice. Let the file speak for itself — OpenClaw does exactly this and gets a single greeting.
+        //
+        // One guard we *do* add: a note that the contents below are the latest version, refreshed every
+        // turn. Without it the model treats the `## FILE.md` headings as references and redundantly calls
+        // read_file on a file it already has in full — re-injecting BOOTSTRAP's "greet now" text right
+        // before generation, which is itself a path to the duplicate greeting.
         if (workspaceFiles.Count > 0)
         {
             sb.AppendLine();
             sb.AppendLine("# Project Context");
             sb.AppendLine();
             sb.AppendLine("The following workspace files define your identity, behavior, and context.");
+            sb.AppendLine("Their full contents below are always the latest version, refreshed every turn — treat them as authoritative and current without re-reading them from disk.");
 
             if (workspaceFiles.ContainsKey("agents"))
                 sb.AppendLine("If AGENTS.md is present, follow its operational guidance (including startup routines and red-line constraints) unless higher-priority instructions override it.");
