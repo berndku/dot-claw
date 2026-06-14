@@ -240,3 +240,25 @@ Disable it by setting `DotClaw:WebSearch` to `false` (or the `DOTCLAW_WEB_SEARCH
 
 Point it at a compatible/proxy MCP endpoint with the `DOTCLAW_WEBSEARCH_MCP_URL` environment
 variable (defaults to `https://search.parallel.ai/mcp`).
+
+## Tracing (OpenTelemetry → Aspire dashboard)
+
+DotClaw can export **OpenTelemetry traces** for every agent turn so you can watch the Microsoft
+Agent Framework's GenAI activity in the [**Aspire dashboard**](https://aspiredashboard.com/). Set
+`DotClaw:Otel:Enabled = true` to turn it on (off by default); `DotClaw:Otel:CaptureMessageContent`
+(default `true`) controls whether spans include the LLM request/response content — the Agent
+Framework's `EnableSensitiveData` flag.
+
+### Start the Aspire dashboard
+
+Install the [Aspire CLI](https://learn.microsoft.com/dotnet/aspire/cli/install) and run the
+standalone dashboard:
+
+```bash
+aspire dashboard run
+```
+
+It serves the UI on `http://localhost:18888` (open the login URL it prints) and ingests OTLP on
+`4317` (gRPC) and `4318` (HTTP) — the defaults DotClaw exports to. The dashboard is optional: if it
+isn't running, the CLI and Telegram gateway work exactly as before and simply emit no traces.
+

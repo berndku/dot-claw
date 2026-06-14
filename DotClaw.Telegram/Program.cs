@@ -6,6 +6,11 @@ using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 
+// ── OpenTelemetry tracing (opt-in) ─────────────────────────────
+// Exports agent + chat-completion GenAI spans over OTLP (e.g. to the Aspire dashboard). No-op when
+// DotClaw:Otel:Enabled is false. Kept alive for the whole process; disposal flushes pending spans.
+using var tracerProvider = Telemetry.TryInitialize();
+
 // ── Resolve Telegram Bot Token ─────────────────────────────────
 var botToken = AppConfiguration.Instance["Telegram:BotToken"];
 if (string.IsNullOrWhiteSpace(botToken))

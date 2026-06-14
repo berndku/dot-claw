@@ -1,5 +1,7 @@
 namespace DotClaw.Runtime;
 
+using OpenTelemetry.Exporter;
+
 public enum ToolExecutionMode
 {
     Cmd,
@@ -23,6 +25,65 @@ public static class DotClawConfig
     /// </summary>
     public static bool WebSearchEnabled =>
         ParseBool(ConfigValue("DotClaw:WebSearch", "DOTCLAW_WEB_SEARCH"), defaultValue: true);
+
+    /// <summary>
+    /// Whether OpenTelemetry tracing is exported over OTLP (e.g. to the Aspire dashboard).
+    /// Off by default — opt-in, like the heartbeat. Enable with <c>DotClaw:Otel:Enabled</c> or the
+    /// <c>DOTCLAW_OTEL</c> env var.
+    /// </summary>
+    public static bool OtelEnabled =>
+        ParseBool(ConfigValue("DotClaw:Otel:Enabled", "DOTCLAW_OTEL"), defaultValue: false);
+
+    /// <summary>
+    /// OTLP collector endpoint. Defaults to the Aspire dashboard's gRPC ingest
+    /// (<c>http://localhost:4317</c>). Honors the standard <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> env var.
+    /// </summary>
+    public static string OtelEndpoint
+    {
+        get
+        {
+            var v = ConfigValue("DotClaw:Otel:Endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT");
+            return string.IsNullOrWhiteSpace(v) ? "http://localhost:4317" : v.Trim();
+        }
+    }
+
+    /// <summary>
+    /// OTLP wire protocol. <c>grpc</c> (default, port 4317) or <c>http/protobuf</c> (port 4318).
+    /// Honors the standard <c>OTEL_EXPORTER_OTLP_PROTOCOL</c> env var.
+    /// </summary>
+    public static OtlpExportProtocol OtelProtocol
+    {
+        get
+        {
+            var v = ConfigValue("DotClaw:Otel:Protocol", "OTEL_EXPORTER_OTLP_PROTOCOL");
+            return (v?.Trim().ToLowerInvariant().Replace("_", "/")) switch
+            {
+                "http/protobuf" or "httpprotobuf" or "http" => OtlpExportProtocol.HttpProtobuf,
+                _ => OtlpExportProtocol.Grpc,
+            };
+        }
+    }
+
+    /// <summary>OpenTelemetry <c>service.name</c> resource attribute. Defaults to <c>DotClaw</c>.</summary>
+    public static string OtelServiceName
+    {
+        get
+        {
+            var v = ConfigValue("DotClaw:Otel:ServiceName", "DOTCLAW_OTEL_SERVICE_NAME");
+            return string.IsNullOrWhiteSpace(v) ? "DotClaw" : v.Trim();
+        }
+    }
+
+    /// <summary>
+    /// Whether to attach LLM request/response content (prompts, completions, tool arguments) to the
+    /// emitted GenAI spans. This is the Agent Framework's <c>EnableSensitiveData</c> flag. On by
+    /// default so the Aspire trace view shows full message content for local debugging; turn it off
+    /// (<c>DotClaw:Otel:CaptureMessageContent: false</c>) to keep potentially sensitive data out of
+    /// traces.
+    /// </summary>
+    public static bool OtelCaptureMessageContent =>
+        ParseBool(ConfigValue("DotClaw:Otel:CaptureMessageContent", "DOTCLAW_OTEL_CAPTURE_CONTENT"),
+            defaultValue: true);
 
     /// <summary>
     /// Selects how built-in file/command tools run.
