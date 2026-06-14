@@ -63,7 +63,7 @@ public static class ContextBuilder
             sb.AppendLine("# Project Context");
             sb.AppendLine();
             sb.AppendLine("The following workspace files define your identity, behavior, and context.");
-            sb.AppendLine("Their full contents below are always the latest version, refreshed every turn — treat them as authoritative and current without re-reading them from disk.");
+            sb.AppendLine("Their full contents below are always the latest version, refreshed every turn — treat them as authoritative and current. Don't list the workspace or call read_file on them to \"check\"; you already have everything here. Use your tools for the user's tasks, not to re-read this context.");
 
             if (workspaceFiles.ContainsKey("agents"))
                 sb.AppendLine("If AGENTS.md is present, follow its operational guidance (including startup routines and red-line constraints) unless higher-priority instructions override it.");
