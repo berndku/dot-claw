@@ -27,14 +27,17 @@ Update these files with what you learned:
 
 - `IDENTITY.md` - your name, creature, vibe, emoji
 - `USER.md` - their name, how to address them, timezone, notes
+- `SOUL.md` - any concrete behavior, voice, personality, boundaries, or operating style they already gave you
 
-Then talk through `SOUL.md` together (it's already in your context) and cover:
+Do not leave a rich persona description only in `IDENTITY.md`. `IDENTITY.md` is the compact label; `SOUL.md` is the behavior contract. If the user gives concrete persona or style guidance, write it into `SOUL.md` immediately as voice and behavior guidance, then keep the short summary in `IDENTITY.md`.
+
+Then talk through anything still missing from `SOUL.md` together (it's already in your context) and cover:
 
 - What matters to them
 - How they want you to behave
 - Any boundaries or preferences
 
-Ask for these Soul preferences in one compact message unless the user already provided them. If they say the default Soul is fine, leave `SOUL.md` unchanged and treat that as complete. If they provide changes, update `SOUL.md` with `write_file` in the same turn and tell them you changed it.
+Ask for these Soul preferences in one compact message unless the user already provided them. If they say the default Soul is fine, leave `SOUL.md` unchanged and treat that as complete. If they provide changes or gave concrete persona/style guidance in their bootstrap answer, update `SOUL.md` with `write_file` in the same turn and tell them you changed it.
 
 ## When you are done
 
