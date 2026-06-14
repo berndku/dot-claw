@@ -80,11 +80,12 @@ public sealed class WorkspaceMemoryProvider : AIContextProvider
     }
 
     /// <summary>
-    /// Reads all workspace files and returns them as tag → content pairs.
+    /// Reads the workspace files for injection and returns them as tag → content pairs.
+    /// On a fresh workspace (BOOTSTRAP.md still present) AGENTS.md and MEMORY.md are withheld so the
+    /// first-run conversation isn't derailed into filesystem exploration.
     /// </summary>
     public Dictionary<string, string> ReadAll()
     {
-        var files = new[] { "AGENTS.md", "BOOTSTRAP.md", "IDENTITY.md", "MEMORY.md", "SOUL.md", "USER.md" };
         var result = new Dictionary<string, string>();
 
         // Snapshot all files under a single read lock so a concurrent writer can't give this turn
@@ -92,6 +93,16 @@ public sealed class WorkspaceMemoryProvider : AIContextProvider
         WorkspaceLock.EnterReadLock();
         try
         {
+            // Fresh workspace: BOOTSTRAP.md is still present (the agent deletes it once it knows who it
+            // is). During bootstrap we withhold AGENTS.md and MEMORY.md — AGENTS.md's tool list and
+            // filesystem framing nudge weaker models to "explore" (list the workspace, re-read files
+            // they already have in context) instead of just having the first conversation. OpenClaw
+            // does the same, injecting only [BOOTSTRAP, IDENTITY, USER, SOUL] on the first run.
+            var isBootstrap = File.Exists(Path.Combine(Workspace, "BOOTSTRAP.md"));
+            var files = isBootstrap
+                ? new[] { "BOOTSTRAP.md", "IDENTITY.md", "USER.md", "SOUL.md" }
+                : new[] { "AGENTS.md", "IDENTITY.md", "MEMORY.md", "SOUL.md", "USER.md" };
+
             foreach (var filename in files)
             {
                 var path = Path.Combine(Workspace, filename);
