@@ -98,14 +98,8 @@ public sealed class WorkspaceMemoryProvider : AIContextProvider
             // tool list and filesystem framing nudge weaker models to "explore" (list the workspace,
             // re-read files they already have in context) instead of just having the first conversation.
             // OpenClaw does the same, injecting only [BOOTSTRAP, IDENTITY, USER, SOUL] on the first run.
-            //
-            // Detection keys on non-empty content, not mere existence: the agent has no delete tool, so
-            // "delete this file" is carried out by writing BOOTSTRAP.md blank. Keying on File.Exists
-            // would leave that emptied file in place and trap the workspace in bootstrap mode forever —
-            // re-greeting ("Hey, I just came online…") on every turn. An empty BOOTSTRAP.md means done.
             var bootstrapPath = Path.Combine(Workspace, "BOOTSTRAP.md");
-            var isBootstrap = File.Exists(bootstrapPath)
-                && !string.IsNullOrWhiteSpace(File.ReadAllText(bootstrapPath));
+            var isBootstrap = File.Exists(bootstrapPath);
             var files = isBootstrap
                 ? new[] { "BOOTSTRAP.md", "IDENTITY.md", "USER.md", "SOUL.md" }
                 : new[] { "AGENTS.md", "IDENTITY.md", "MEMORY.md", "SOUL.md", "USER.md" };
