@@ -58,6 +58,15 @@ public static class DotClawAgentFactory
         // Always offer the send_message demo tool alongside the sandbox/in-process tools.
         var tools = new List<AITool>(baseTools) { MessagingTools.Create() };
 
+        // Free Parallel hosted Search MCP (web_search/web_fetch). Sandbox-independent, so it's
+        // offered in every tool mode and to both frontends (CLI + Telegram). Fail-soft: an
+        // unreachable endpoint yields an empty list rather than blocking agent startup.
+        var webSearchEnabled = DotClawConfig.WebSearchEnabled;
+        var webSearchTools = webSearchEnabled
+            ? await WebSearchTools.GetToolsAsync()
+            : [];
+        tools.AddRange(webSearchTools);
+
         // Route-bound cron tools, only for real user turns. Cron- and heartbeat-triggered turns
         // must NOT be able to schedule more reminders (anti-recursion).
         if (source == TurnSource.User && cron is not null
@@ -79,6 +88,12 @@ public static class DotClawAgentFactory
         });
         if (!policy.IsEmpty)
             Console.WriteLine("[DotClaw] approval-required tools: " + string.Join(", ", policy.GatedNames));
+
+        Console.WriteLine(webSearchEnabled
+            ? (webSearchTools.Count > 0
+                ? $"[DotClaw] web search: Parallel Search MCP ({webSearchTools.Count} tool(s))"
+                : "[DotClaw] web search: enabled but unavailable (remote MCP unreachable)")
+            : "[DotClaw] web search: disabled");
 
         Console.WriteLine($"[DotClaw] model: {ModelDeployment} @ {Endpoint}");
         Console.WriteLine(string.IsNullOrWhiteSpace(key)

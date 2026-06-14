@@ -18,6 +18,13 @@ public static class DotClawConfig
         ParseBool(AppConfiguration.Instance["DotClaw:Heartbeat"], defaultValue: false);
 
     /// <summary>
+    /// Whether the free Parallel hosted Search MCP (<c>web_search</c>/<c>web_fetch</c>) is offered
+    /// to the agent. On by default; reachability failures are handled fail-soft at startup.
+    /// </summary>
+    public static bool WebSearchEnabled =>
+        ParseBool(ConfigValue("DotClaw:WebSearch", "DOTCLAW_WEB_SEARCH"), defaultValue: true);
+
+    /// <summary>
     /// Selects how built-in file/command tools run.
     /// Prefer <c>DotClaw:ToolMode</c>; legacy <c>DotClaw:Sandbox</c> is retained as a fallback.
     /// </summary>

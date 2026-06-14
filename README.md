@@ -105,6 +105,7 @@ Edit `appsettings.local.json`:
     "Heartbeat": false,
     "HeartbeatIntervalSeconds": 45,
     "ToolMode": "sandboxmcp",
+    "WebSearch": true,
     "ApprovalTools": [ "send_message" ]
   }
 }
@@ -206,3 +207,36 @@ dotnet run
 
 Connects to your bot using `Telegram:BotToken` and serves chat (and voice notes, if Azure Speech is
 configured). Run this instead of the CLI when you want to talk to DotClaw from your phone.
+
+## Web search
+
+DotClaw ships with built-in web search via [Parallel](https://parallel.ai/)'s **hosted Search MCP**
+server (`https://search.parallel.ai/mcp`) — the same free provider OpenClaw uses for `parallel-free`.
+It is **free to use anonymously**, requires **no account or API key**, and is **on by default** for
+both the CLI and the Telegram gateway, in every tool execution mode.
+
+The remote server exposes two tools to the agent:
+
+| Tool | Purpose |
+| --- | --- |
+| `web_search` | General-purpose web search returning LLM-optimized, ranked excerpts across multiple sources. |
+| `web_fetch` | Pulls token-efficient markdown from a specific URL (use after `web_search` narrows candidates). |
+
+Unlike the `exec`/`read_file`/`write_file` tools, web search is a plain network call and does **not**
+run through the MXC sandbox, so it works the same regardless of `DotClaw:ToolMode`.
+
+**Fail-soft.** If Parallel's MCP endpoint can't be reached at startup, DotClaw prints a warning and
+simply starts without the web tools — agent startup is never blocked.
+
+Disable it by setting `DotClaw:WebSearch` to `false` (or the `DOTCLAW_WEB_SEARCH` env var):
+
+```json
+{
+  "DotClaw": {
+    "WebSearch": false
+  }
+}
+```
+
+Point it at a compatible/proxy MCP endpoint with the `DOTCLAW_WEBSEARCH_MCP_URL` environment
+variable (defaults to `https://search.parallel.ai/mcp`).
