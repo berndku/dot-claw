@@ -1,5 +1,7 @@
 namespace DotClaw.Runtime;
 
+using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using DotClaw.Agent;
 using DotClaw.Cron;
@@ -52,7 +54,7 @@ public sealed class AgentRunner
         var session = await agent.CreateSessionAsync();
 
         var store = new SessionManager(SessionKey(route));
-        var history = LoadHistory(store);
+        var history = LoadHistory(store.Load());
         history.Add(new ChatMessage(ChatRole.User, userText));
 
         var response = await agent.RunAsync(history, session);
@@ -137,18 +139,32 @@ public sealed class AgentRunner
         var session = await agent.CreateSessionAsync();
 
         var store = new SessionManager(SessionKey(route));
-        var history = LoadHistory(store);
-        var prompt = BuildHeartbeatPrompt(memory);
+        var entries = store.Load();
+        var history = LoadHistory(entries);
+        var prompt = BuildHeartbeatPrompt(memory, TimeSinceLastUser(entries));
         if (prompt is null)
         {
             Console.WriteLine($"[heartbeat] {route.ChatId}: no heartbeat tasks configured (silent)");
             return;
         }
 
-        history.Add(new ChatMessage(ChatRole.System, prompt));
+        // Inject as a User turn, not System: chat models are trained to *respond* to the user turn,
+        // so a wake-up in the user slot reliably prompts a decision to speak or stay silent. A trailing
+        // system message reads as configuration and biases the model toward the compliant minimal
+        // answer (HEARTBEAT_OK) — the reason the heartbeat never actually checked in.
+        history.Add(new ChatMessage(ChatRole.User, prompt));
+
+        // [HEARTBEAT-DIAG] Temporary troubleshooting — remove once confirmed working.
+        Console.WriteLine($"[heartbeat-diag] history={history.Count} msgs (excluding the tick prompt):");
+        for (var i = 0; i < history.Count - 1; i++)
+            Console.WriteLine($"[heartbeat-diag]   {history[i].Role}: {Truncate((history[i].Text ?? "").Replace('\n', ' '), 80)}");
+        Console.WriteLine($"[heartbeat-diag] FULL PROMPT >>>\n{prompt}\n<<< END PROMPT");
 
         var response = await agent.RunAsync(history, session);
         var text = (FinalAssistantText(response) ?? "").Trim();
+
+        // [HEARTBEAT-DIAG] Temporary — show the raw model reply so we can see WHY it's silent.
+        Console.WriteLine($"[heartbeat-diag] rawReply=\"{Truncate(text.Replace('\n', ' '), 120)}\"");
 
         // Restraint: an empty or HEARTBEAT_OK reply means "nothing to say" — stay silent.
         if (text.Length == 0 || text.StartsWith(HeartbeatOk, StringComparison.OrdinalIgnoreCase))
@@ -205,18 +221,39 @@ public sealed class AgentRunner
             .Select(m => m.Text)
             .LastOrDefault(t => !string.IsNullOrWhiteSpace(t));
 
-    private static List<ChatMessage> LoadHistory(SessionManager store)
+    private static List<ChatMessage> LoadHistory(IReadOnlyList<JsonElement> entries)
     {
         var history = new List<ChatMessage>();
-        foreach (var entry in store.Load())
+        foreach (var entry in entries)
         {
             if (!entry.TryGetProperty("role", out var roleProp)) continue;
             var role = roleProp.GetString();
             var content = entry.TryGetProperty("content", out var c) ? c.GetString() ?? "" : "";
-            if (role is "user") history.Add(new ChatMessage(ChatRole.User, content));
-            else if (role is "assistant") history.Add(new ChatMessage(ChatRole.Assistant, content));
+            var timestamp = entry.TryGetProperty("timestamp", out var t) ? t.GetString() : null;
+            var stamped = StampContent(timestamp, content);
+            if (role is "user") history.Add(new ChatMessage(ChatRole.User, stamped));
+            else if (role is "assistant") history.Add(new ChatMessage(ChatRole.Assistant, stamped));
         }
         return HistoryTrimmer.Trim(history, MaxHistoryTokens);
+    }
+
+    // Prefixes a persisted message's wall-clock time to its content so the model can see *when* each
+    // turn happened. The chat-completion wire format carries no per-message timestamp field, so the
+    // only way the model can reason about staleness — e.g. the heartbeat deciding whether to check in
+    // on a quiet user — is to read the time from inside the content. Paired with the "Current
+    // date/time" line ContextBuilder injects every turn (same UTC-minute format), this lets the model
+    // compute how long ago the last user message was, with no special-casing in the prompt.
+    private static string StampContent(string? isoTimestamp, string content)
+    {
+        if (string.IsNullOrWhiteSpace(isoTimestamp))
+            return content;
+
+        var formatted = DateTimeOffset.TryParse(
+            isoTimestamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto)
+            ? dto.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture)
+            : isoTimestamp;
+
+        return $"[{formatted}] {content}";
     }
 
     /// <summary>
@@ -225,18 +262,27 @@ public sealed class AgentRunner
     /// frontend — which runs its own lightweight heartbeat loop rather than the channel/consumer the
     /// Telegram gateway uses — can share the exact same gating and framing.
     /// </summary>
-    public static string? BuildHeartbeatPrompt(WorkspaceMemoryProvider memory)
+    public static string? BuildHeartbeatPrompt(WorkspaceMemoryProvider memory, TimeSpan? sinceLastUser = null)
     {
         var custom = memory.TryReadRaw("HEARTBEAT.md");
         if (!HasHeartbeatInstructions(custom))
             return null;
 
         var body = custom!.Trim();
+        var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
+
+        // Do the arithmetic the model is unreliable at: state the exact elapsed time since the user's
+        // last message so HEARTBEAT.md's rules can act on a fact, instead of re-deriving it from the
+        // minute-precision stamps in the replayed transcript.
+        var gapLine = sinceLastUser is { } gap
+            ? $"Elapsed time since the user's last message: {DescribeGap(gap)}.\n\n"
+            : "";
 
         return
-            "[HEARTBEAT] This is an automatic background check, not a message from the user.\n" +
+            $"[HEARTBEAT @ {now}] Automatic background tick — the user has not sent a new message. Follow the rules below and decide what to do.\n\n" +
+            gapLine +
             body + "\n\n" +
-            $"If there is nothing worth sending right now, reply with exactly: {HeartbeatOk}";
+            $"Output only your decision: either the exact message to send the user now, or the literal token {HeartbeatOk} to stay silent — exactly as the rules above direct.";
     }
 
     private static bool HasHeartbeatInstructions(string? content)
@@ -253,6 +299,40 @@ public sealed class AgentRunner
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Wall-clock time since the most recent user message in <paramref name="entries"/>, or
+    /// <c>null</c> when no user message is on record. Uses the persisted ISO timestamps (second
+    /// precision) so the heartbeat can state the gap exactly rather than make the model derive it
+    /// from the minute-truncated stamps in the replayed transcript.
+    /// </summary>
+    private static TimeSpan? TimeSinceLastUser(IEnumerable<JsonElement> entries)
+    {
+        DateTimeOffset? lastUser = null;
+        foreach (var entry in entries)
+        {
+            if (!entry.TryGetProperty("role", out var role) || role.GetString() != "user")
+                continue;
+            if (entry.TryGetProperty("timestamp", out var t) &&
+                DateTimeOffset.TryParse(
+                    t.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto))
+                lastUser = dto;
+        }
+
+        return lastUser is { } u ? DateTime.UtcNow - u.UtcDateTime : null;
+    }
+
+    /// <summary>Renders an elapsed <see cref="TimeSpan"/> as a short human phrase (e.g. "3 minutes").</summary>
+    private static string DescribeGap(TimeSpan gap)
+    {
+        if (gap < TimeSpan.FromMinutes(1)) return "less than a minute";
+        var minutes = (int)gap.TotalMinutes;
+        if (minutes < 60) return minutes == 1 ? "1 minute" : $"{minutes} minutes";
+        var hours = (int)gap.TotalHours;
+        if (hours < 24) return hours == 1 ? "1 hour" : $"{hours} hours";
+        var days = (int)gap.TotalDays;
+        return days == 1 ? "1 day" : $"{days} days";
     }
 
     private static string Truncate(string s, int max) => s.Length > max ? s[..max] + "..." : s;

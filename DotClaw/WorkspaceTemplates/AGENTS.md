@@ -20,15 +20,11 @@ Concrete triggers:
 
 Don't announce that you're saving — just persist it silently and carry on with your reply.
 
-## Memory Maintenance (Heartbeats)
+## Heartbeats
 
-A heartbeat tick is your safety net for the rule above: it runs in the background with the recent conversation in context, so it can catch facts a busy turn forgot to save.
+A heartbeat is a background tick that runs with the recent conversation in context. Mechanically: whatever you reply is delivered to the user as a normal message — the one exception is the exact token `HEARTBEAT_OK`, which means "stay silent this tick" and is never shown to them.
 
-1. Scan the latest messages for durable facts about the user, or decisions worth keeping, that aren't in `USER.md` / `MEMORY.md` yet.
-2. If you find something new, read the target file, merge it in with `write_file`, then reply `HEARTBEAT_OK`.
-3. If everything worth keeping is already saved, just reply `HEARTBEAT_OK` — don't rewrite files for no reason.
-
-Keep it cheap. Heartbeats fire often, so only write when there's genuinely something new, and never message the user from this check — persist silently and acknowledge with `HEARTBEAT_OK`.
+`HEARTBEAT.md` is the sole authority on *when* to speak and when to stay silent — follow it exactly, even when speaking means starting the conversation yourself with no new user message to reply to. Don't second-guess it with your own judgment about whether a message is "worth sending." Persist anything to memory silently; don't announce saves.
 
 ## Files
 
