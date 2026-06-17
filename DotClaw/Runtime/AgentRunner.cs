@@ -154,17 +154,8 @@ public sealed class AgentRunner
         // answer (HEARTBEAT_OK) — the reason the heartbeat never actually checked in.
         history.Add(new ChatMessage(ChatRole.User, prompt));
 
-        // [HEARTBEAT-DIAG] Temporary troubleshooting — remove once confirmed working.
-        Console.WriteLine($"[heartbeat-diag] history={history.Count} msgs (excluding the tick prompt):");
-        for (var i = 0; i < history.Count - 1; i++)
-            Console.WriteLine($"[heartbeat-diag]   {history[i].Role}: {Truncate((history[i].Text ?? "").Replace('\n', ' '), 80)}");
-        Console.WriteLine($"[heartbeat-diag] FULL PROMPT >>>\n{prompt}\n<<< END PROMPT");
-
         var response = await agent.RunAsync(history, session);
         var text = (FinalAssistantText(response) ?? "").Trim();
-
-        // [HEARTBEAT-DIAG] Temporary — show the raw model reply so we can see WHY it's silent.
-        Console.WriteLine($"[heartbeat-diag] rawReply=\"{Truncate(text.Replace('\n', ' '), 120)}\"");
 
         // Restraint: an empty or HEARTBEAT_OK reply means "nothing to say" — stay silent.
         if (text.Length == 0 || text.StartsWith(HeartbeatOk, StringComparison.OrdinalIgnoreCase))
@@ -273,14 +264,14 @@ public sealed class AgentRunner
 
         // Do the arithmetic the model is unreliable at: state the exact elapsed time since the user's
         // last message so HEARTBEAT.md's rules can act on a fact, instead of re-deriving it from the
-        // minute-precision stamps in the replayed transcript.
-        var gapLine = sinceLastUser is { } gap
-            ? $"Elapsed time since the user's last message: {DescribeGap(gap)}.\n\n"
+        // minute-precision stamps in the replayed transcript. State it as a bare fact — no narration
+        // about why the tick fired (mirrors OpenClaw's minimal heartbeat prompt).
+        var elapsed = sinceLastUser is { } gap
+            ? $" Elapsed time since the user's last message: {DescribeGap(gap)}."
             : "";
 
         return
-            $"[HEARTBEAT @ {now}] Automatic background tick — the user has not sent a new message. Follow the rules below and decide what to do.\n\n" +
-            gapLine +
+            $"[HEARTBEAT @ {now}]{elapsed}\n\n" +
             body + "\n\n" +
             $"Output only your decision: either the exact message to send the user now, or the literal token {HeartbeatOk} to stay silent — exactly as the rules above direct.";
     }
